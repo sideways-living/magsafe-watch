@@ -43,7 +43,7 @@ The window has separate pages:
 - Intro: explains what the app does and how it decides whether an unplug looks accidental
 - Settings: switches for monitoring, motion detection, idle fallback, external input detection, and repeat reminders
 - Notifications: switches for macOS banners, alert sound, and webhook push alerts
-- Status: current power source, idle time, and latest motion result
+- Status: current power source, idle time, latest motion result, input source, and update status
 
 You can close the window after launch. The menu-bar bolt icon keeps running and
 has:
@@ -79,11 +79,14 @@ Example:
   "localNotificationsEnabled": true,
   "soundEnabled": true,
   "webhookNotificationsEnabled": false,
+  "autoUpdateChecksEnabled": true,
   "stationaryIdleThresholdSeconds": 90,
   "motionSampleWindowSeconds": 10,
   "inputActivityWindowSeconds": 15,
   "movementThresholdG": 0.08,
   "repeatAlertIntervalSeconds": 300,
+  "updateCheckIntervalHours": 24,
+  "updateFeedURL": "",
   "webhookURL": ""
 }
 ```
@@ -105,6 +108,21 @@ Pushover, ntfy, IFTTT, Home Assistant, or your own endpoint. The app sends:
   "source": "Your Mac Name"
 }
 ```
+
+## Update Checks
+
+MagSafe Watch can automatically check a GitHub Releases feed on launch and then
+on the configured interval. Set `updateFeedURL` after the GitHub repository has
+releases, using this format:
+
+```text
+https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
+```
+
+The app compares the release `tag_name`, such as `v0.2.0`, with its bundle
+version. If a newer release exists, it notifies you and the manual Check for
+Updates button opens the GitHub release page. It does not silently replace the
+running app.
 
 ## iPhone and Apple Watch alerts
 

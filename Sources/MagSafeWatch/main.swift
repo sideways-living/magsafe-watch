@@ -13,9 +13,11 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private let inputMonitor = InputActivityMonitor()
     private let settings = AppSettings()
     private lazy var notifier = AlertNotifier(settings: settings)
+    private lazy var updateChecker = UpdateChecker(settings: settings)
     private var statusItem: NSStatusItem!
     private var statusWindowController: StatusWindowController?
     private var reminderTimer: Timer?
+    private var updateTimer: Timer?
     private var latestState = PowerState(isOnACPower: true, sourceDescription: "Unknown")
     private var motionCheckID = UUID()
 
@@ -32,11 +34,13 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         }
         monitor.start()
         inputMonitor.start()
+        scheduleUpdateChecks()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
         inputMonitor.stop()
+        updateTimer?.invalidate()
     }
 
     private func configureStatusItem() {
@@ -48,6 +52,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Show Status Window", action: #selector(showStatusWindow), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Send Test Alert", action: #selector(sendTestAlert), keyEquivalent: "t"))
+        menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdatesFromMenu), keyEquivalent: "u"))
         menu.addItem(NSMenuItem(title: "Open Settings", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
@@ -247,6 +252,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             statusWindowController = StatusWindowController(
                 settings: settings,
                 testAlertHandler: { [weak self] in self?.sendTestAlert() },
+                checkForUpdatesHandler: { [weak self] in self?.checkForUpdates(manual: true) },
+                updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
                 openConfigHandler: { [weak self] in self?.openConfigFile() }
             )
         }
@@ -260,6 +267,73 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         statusWindowController?.showWindow(nil)
         statusWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func scheduleUpdateChecks() {
+        updateTimer?.invalidate()
+        guard settings.autoUpdateChecksEnabled else { return }
+
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.checkForUpdates(manual: false)
+            }
+        }
+
+        updateTimer = Timer.scheduledTimer(
+            timeInterval: settings.updateCheckInterval,
+            target: self,
+            selector: #selector(checkForUpdatesFromTimer),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    @objc private func checkForUpdatesFromMenu() {
+        showStatusWindow()
+        statusWindowController?.showStatusPage()
+        checkForUpdates(manual: true)
+    }
+
+    @objc private func checkForUpdatesFromTimer() {
+        checkForUpdates(manual: false)
+    }
+
+    private func checkForUpdates(manual: Bool) {
+        statusWindowController?.updateUpdateStatus("Checking for updates...")
+        updateChecker.check { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                switch result {
+                case .available(let version, let url):
+                    self.statusWindowController?.updateUpdateStatus("Update available: \(version)")
+                    self.notifier.alert(
+                        title: "MagSafe Watch update available",
+                        body: "Version \(version) is available. Open the release page from Advanced Config or GitHub."
+                    )
+                    if manual {
+                        NSWorkspace.shared.open(url)
+                    }
+                case .current(let version):
+                    self.statusWindowController?.updateUpdateStatus("Up to date: \(version)")
+                    if manual {
+                        self.notifier.alert(title: "MagSafe Watch is up to date", body: "You are running version \(version).")
+                    }
+                case .notConfigured:
+                    self.statusWindowController?.updateUpdateStatus("Update feed not configured")
+                    if manual {
+                        self.notifier.alert(
+                            title: "Update feed not configured",
+                            body: "Add a GitHub latest-release API URL in Advanced Config."
+                        )
+                    }
+                case .failed(let message):
+                    self.statusWindowController?.updateUpdateStatus("Update check failed")
+                    if manual {
+                        self.notifier.alert(title: "Update check failed", body: message)
+                    }
+                }
+            }
+        }
     }
 
     @objc private func openSettings() {
@@ -279,17 +353,22 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 final class StatusWindowController: NSWindowController {
     private let settings: AppSettings
     private let testAlertHandler: () -> Void
+    private let checkForUpdatesHandler: () -> Void
+    private let updateScheduleChangedHandler: () -> Void
     private let openConfigHandler: () -> Void
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
     private let motionValue = NSTextField(labelWithString: "Checking...")
     private let inputValue = NSTextField(labelWithString: "Checking...")
+    private let updateValue = NSTextField(labelWithString: "Not checked")
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
+        self.checkForUpdatesHandler = checkForUpdatesHandler
+        self.updateScheduleChangedHandler = updateScheduleChangedHandler
         self.openConfigHandler = openConfigHandler
 
         let window = NSWindow(
@@ -317,6 +396,14 @@ final class StatusWindowController: NSWindowController {
 
     func showSettingsPage() {
         selectPage(1)
+    }
+
+    func showStatusPage() {
+        selectPage(3)
+    }
+
+    func updateUpdateStatus(_ status: String) {
+        updateValue.stringValue = status
     }
 
     private func buildContentView() -> NSView {
@@ -404,14 +491,16 @@ final class StatusWindowController: NSWindowController {
             checkbox(title: "Use motion detection when sensor events are available", isOn: settings.motionDetectionEnabled, action: #selector(toggleMotionDetection(_:))),
             checkbox(title: "Use idle-time fallback when motion data is unavailable", isOn: settings.idleFallbackEnabled, action: #selector(toggleIdleFallback(_:))),
             checkbox(title: "Treat external keyboard or mouse input as desk activity", isOn: settings.externalInputDeskSignalEnabled, action: #selector(toggleExternalInputDeskSignal(_:))),
-            checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:)))
+            checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:))),
+            checkbox(title: "Automatically check for app updates", isOn: settings.autoUpdateChecksEnabled, action: #selector(toggleAutoUpdateChecks(_:)))
         ]
 
-        let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.inputActivityWindow))s input window, \(Int(settings.repeatAlertInterval))s repeat reminders.")
+        let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.inputActivityWindow))s input window, \(Int(settings.repeatAlertInterval))s repeat reminders, \(Int(settings.updateCheckInterval / 3600))h update checks.")
+        let updateFeed = paragraph(settings.updateFeedURL == nil ? "Update feed is not configured. Add a GitHub latest-release API URL in Advanced Config when the repository has releases." : "Update feed is configured.")
         let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
         configButton.bezelStyle = .rounded
 
-        return pageStack([title, body] + controls + [timing, configButton])
+        return pageStack([title, body] + controls + [timing, updateFeed, configButton])
     }
 
     private func buildNotificationsPage() -> NSView {
@@ -441,21 +530,26 @@ final class StatusWindowController: NSWindowController {
         let idleLabel = label("Activity")
         let motionLabel = label("Motion")
         let inputLabel = label("Input")
+        let updateLabel = label("Updates")
 
         let grid = NSGridView(views: [
             [powerLabel, powerValue],
             [idleLabel, idleValue],
             [motionLabel, motionValue],
-            [inputLabel, inputValue]
+            [inputLabel, inputValue],
+            [updateLabel, updateValue]
         ])
         grid.rowSpacing = 8
         grid.columnSpacing = 18
         grid.xPlacement = .leading
 
+        let updateButton = NSButton(title: "Check for Updates", target: self, action: #selector(checkForUpdates))
+        updateButton.bezelStyle = .rounded
+
         let quitButton = NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitButton.bezelStyle = .rounded
 
-        return pageStack([title, description, grid, quitButton])
+        return pageStack([title, description, grid, row([updateButton, quitButton])])
     }
 
     private func pageStack(_ views: [NSView]) -> NSView {
@@ -516,6 +610,10 @@ final class StatusWindowController: NSWindowController {
         openConfigHandler()
     }
 
+    @objc private func checkForUpdates() {
+        checkForUpdatesHandler()
+    }
+
     @objc private func toggleMonitor(_ sender: NSButton) {
         settings.monitorEnabled = sender.state == .on
         settings.save()
@@ -539,6 +637,12 @@ final class StatusWindowController: NSWindowController {
     @objc private func toggleExternalInputDeskSignal(_ sender: NSButton) {
         settings.externalInputDeskSignalEnabled = sender.state == .on
         settings.save()
+    }
+
+    @objc private func toggleAutoUpdateChecks(_ sender: NSButton) {
+        settings.autoUpdateChecksEnabled = sender.state == .on
+        settings.save()
+        updateScheduleChangedHandler()
     }
 
     @objc private func toggleLocalNotifications(_ sender: NSButton) {
@@ -899,6 +1003,106 @@ final class InputActivityMonitor {
     }
 }
 
+enum UpdateCheckResult {
+    case available(version: String, url: URL)
+    case current(version: String)
+    case notConfigured
+    case failed(message: String)
+}
+
+private final class UpdateCompletionBox: @unchecked Sendable {
+    let completion: (UpdateCheckResult) -> Void
+
+    init(_ completion: @escaping (UpdateCheckResult) -> Void) {
+        self.completion = completion
+    }
+}
+
+final class UpdateChecker {
+    private let settings: AppSettings
+
+    init(settings: AppSettings) {
+        self.settings = settings
+    }
+
+    func check(completion: @escaping (UpdateCheckResult) -> Void) {
+        guard let feedURL = settings.updateFeedURL else {
+            completion(.notConfigured)
+            return
+        }
+
+        let completionBox = UpdateCompletionBox(completion)
+        var request = URLRequest(url: feedURL)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error {
+                completionBox.completion(.failed(message: error.localizedDescription))
+                return
+            }
+
+            guard let data else {
+                completionBox.completion(.failed(message: "No update data was returned."))
+                return
+            }
+
+            do {
+                let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                let latestVersion = Version(release.tagName)
+                let currentVersion = Version(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
+
+                if latestVersion > currentVersion, let url = URL(string: release.htmlURL) {
+                    completionBox.completion(.available(version: release.tagName, url: url))
+                } else {
+                    completionBox.completion(.current(version: currentVersion.description))
+                }
+            } catch {
+                completionBox.completion(.failed(message: "The update feed could not be read: \(error.localizedDescription)"))
+            }
+        }.resume()
+    }
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+    }
+}
+
+private struct Version: Comparable, CustomStringConvertible {
+    let parts: [Int]
+    let raw: String
+
+    init(_ raw: String) {
+        self.raw = raw
+        let cleaned = raw.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+        parts = cleaned
+            .split(separator: ".")
+            .map { Int($0.prefix { $0.isNumber }) ?? 0 }
+    }
+
+    var description: String {
+        raw
+    }
+
+    static func < (lhs: Version, rhs: Version) -> Bool {
+        let count = max(lhs.parts.count, rhs.parts.count)
+        for index in 0..<count {
+            let left = index < lhs.parts.count ? lhs.parts[index] : 0
+            let right = index < rhs.parts.count ? rhs.parts[index] : 0
+            if left != right {
+                return left < right
+            }
+        }
+        return false
+    }
+}
+
 final class AlertNotifier {
     private let settings: AppSettings
 
@@ -967,12 +1171,15 @@ final class AppSettings {
     var localNotificationsEnabled: Bool
     var soundEnabled: Bool
     var webhookNotificationsEnabled: Bool
+    var autoUpdateChecksEnabled: Bool
     var stationaryIdleThreshold: TimeInterval
     var repeatAlertInterval: TimeInterval
     var motionSampleWindow: TimeInterval
     var inputActivityWindow: TimeInterval
+    var updateCheckInterval: TimeInterval
     var movementThreshold: Double
     var webhookURL: URL?
+    var updateFeedURL: URL?
     let configFileURL: URL
 
     init() {
@@ -992,11 +1199,14 @@ final class AppSettings {
               "localNotificationsEnabled": true,
               "soundEnabled": true,
               "webhookNotificationsEnabled": false,
+              "autoUpdateChecksEnabled": true,
               "stationaryIdleThresholdSeconds": 90,
               "motionSampleWindowSeconds": 10,
               "inputActivityWindowSeconds": 15,
               "movementThresholdG": 0.08,
               "repeatAlertIntervalSeconds": 300,
+              "updateCheckIntervalHours": 24,
+              "updateFeedURL": "",
               "webhookURL": ""
             }
             """
@@ -1014,16 +1224,24 @@ final class AppSettings {
         localNotificationsEnabled = object["localNotificationsEnabled"] as? Bool ?? true
         soundEnabled = object["soundEnabled"] as? Bool ?? true
         webhookNotificationsEnabled = object["webhookNotificationsEnabled"] as? Bool ?? false
+        autoUpdateChecksEnabled = object["autoUpdateChecksEnabled"] as? Bool ?? true
         stationaryIdleThreshold = object["stationaryIdleThresholdSeconds"] as? TimeInterval ?? 90
         motionSampleWindow = object["motionSampleWindowSeconds"] as? TimeInterval ?? 10
         inputActivityWindow = object["inputActivityWindowSeconds"] as? TimeInterval ?? 15
         movementThreshold = object["movementThresholdG"] as? Double ?? 0.08
         repeatAlertInterval = object["repeatAlertIntervalSeconds"] as? TimeInterval ?? 300
+        updateCheckInterval = ((object["updateCheckIntervalHours"] as? TimeInterval) ?? 24) * 3600
 
         if let rawURL = object["webhookURL"] as? String, !rawURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             webhookURL = URL(string: rawURL)
         } else {
             webhookURL = nil
+        }
+
+        if let rawURL = object["updateFeedURL"] as? String, !rawURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updateFeedURL = URL(string: rawURL)
+        } else {
+            updateFeedURL = nil
         }
     }
 
@@ -1037,11 +1255,14 @@ final class AppSettings {
             "localNotificationsEnabled": localNotificationsEnabled,
             "soundEnabled": soundEnabled,
             "webhookNotificationsEnabled": webhookNotificationsEnabled,
+            "autoUpdateChecksEnabled": autoUpdateChecksEnabled,
             "stationaryIdleThresholdSeconds": stationaryIdleThreshold,
             "motionSampleWindowSeconds": motionSampleWindow,
             "inputActivityWindowSeconds": inputActivityWindow,
             "movementThresholdG": movementThreshold,
             "repeatAlertIntervalSeconds": repeatAlertInterval,
+            "updateCheckIntervalHours": updateCheckInterval / 3600,
+            "updateFeedURL": updateFeedURL?.absoluteString ?? "",
             "webhookURL": webhookURL?.absoluteString ?? ""
         ]
 
