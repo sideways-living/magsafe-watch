@@ -1,5 +1,7 @@
 # MagSafe Watch
 
+![MagSafe Watch logo](Assets/MagSafeWatchLogo.svg)
+
 MagSafe Watch is a small macOS app that watches for AC power changes. When the
 Mac switches to battery power and does not physically move, it plays a sound and
 posts a local macOS notification.

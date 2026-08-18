@@ -15,6 +15,7 @@ swift build -c release --package-path "$ROOT_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"
+swift "$ROOT_DIR/scripts/generate_icon.swift" "$RESOURCES_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -31,6 +32,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>6.0</string>
   <key>CFBundleName</key>
   <string>MagSafe Watch</string>
+  <key>CFBundleIconFile</key>
+  <string>MagSafeWatch</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
