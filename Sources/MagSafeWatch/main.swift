@@ -10,6 +10,7 @@ import UserNotifications
 final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private let monitor = PowerMonitor()
     private let motionClassifier = MotionClassifier()
+    private let inputMonitor = InputActivityMonitor()
     private let settings = AppSettings()
     private lazy var notifier = AlertNotifier(settings: settings)
     private var statusItem: NSStatusItem!
@@ -30,10 +31,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             }
         }
         monitor.start()
+        inputMonitor.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        inputMonitor.stop()
     }
 
     private func configureStatusItem() {
@@ -54,7 +57,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private func handlePowerState(_ state: PowerState) {
         latestState = state
         updateStatusIcon(for: state)
-        statusWindowController?.update(state: state, idleSeconds: UserActivity.idleSeconds, motionStatus: motionClassifier.statusDescription)
+        statusWindowController?.update(
+            state: state,
+            idleSeconds: UserActivity.idleSeconds,
+            motionStatus: motionClassifier.statusDescription,
+            inputStatus: inputMonitor.statusDescription
+        )
 
         guard settings.monitorEnabled else { return }
 
@@ -81,7 +89,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 
         let checkID = UUID()
         motionCheckID = checkID
-        statusWindowController?.update(state: state, idleSeconds: UserActivity.idleSeconds, motionStatus: "Sampling motion...")
+        statusWindowController?.update(
+            state: state,
+            idleSeconds: UserActivity.idleSeconds,
+            motionStatus: "Sampling motion...",
+            inputStatus: inputMonitor.statusDescription
+        )
 
         motionClassifier.classify(
             sampleDuration: settings.motionSampleWindow,
@@ -91,7 +104,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             self.statusWindowController?.update(
                 state: self.latestState,
                 idleSeconds: UserActivity.idleSeconds,
-                motionStatus: result.statusDescription
+                motionStatus: result.statusDescription,
+                inputStatus: self.inputMonitor.statusDescription
             )
 
             switch result {
@@ -109,6 +123,19 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 
     private func classifyDisconnectWithIdleFallback(state: PowerState, reason: String) {
         guard settings.idleFallbackEnabled else { return }
+        if settings.externalInputDeskSignalEnabled {
+            let inputContext = inputMonitor.context(recentThreshold: settings.inputActivityWindow)
+            switch inputContext {
+            case .externalRecent(let age):
+                sendAccidentalUnplugAlert(source: state.sourceDescription, reason: reason + " External keyboard or mouse activity was detected \(Int(age.rounded()))s ago, so the Mac appears active at the desk.")
+                return
+            case .builtInRecent:
+                return
+            case .idle:
+                break
+            }
+        }
+
         let idleSeconds = UserActivity.idleSeconds
         guard idleSeconds >= settings.stationaryIdleThreshold else { return }
         sendAccidentalUnplugAlert(source: state.sourceDescription, reason: reason + " Idle fallback: \(Int(idleSeconds.rounded()))s.")
@@ -157,7 +184,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             self.statusWindowController?.update(
                 state: self.latestState,
                 idleSeconds: UserActivity.idleSeconds,
-                motionStatus: result.statusDescription
+                motionStatus: result.statusDescription,
+                inputStatus: self.inputMonitor.statusDescription
             )
 
             switch result {
@@ -180,6 +208,25 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 
     private func sendIdleFallbackReminder() {
         guard settings.idleFallbackEnabled else { return }
+        if settings.externalInputDeskSignalEnabled {
+            switch inputMonitor.context(recentThreshold: settings.inputActivityWindow) {
+            case .externalRecent:
+                notifier.alert(
+                    title: "Still on battery",
+                    body: "The MacBook is still unplugged while external keyboard or mouse input suggests desk use."
+                )
+                notifier.sendWebhookIfConfigured(
+                    title: "MacBook still unplugged",
+                    message: "The MacBook is still unplugged while external keyboard or mouse input suggests desk use."
+                )
+                return
+            case .builtInRecent:
+                return
+            case .idle:
+                break
+            }
+        }
+
         guard UserActivity.idleSeconds >= settings.stationaryIdleThreshold else { return }
         notifier.alert(
             title: "Still on battery",
@@ -204,7 +251,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             )
         }
 
-        statusWindowController?.update(state: latestState, idleSeconds: UserActivity.idleSeconds, motionStatus: motionClassifier.statusDescription)
+        statusWindowController?.update(
+            state: latestState,
+            idleSeconds: UserActivity.idleSeconds,
+            motionStatus: motionClassifier.statusDescription,
+            inputStatus: inputMonitor.statusDescription
+        )
         statusWindowController?.showWindow(nil)
         statusWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -231,6 +283,7 @@ final class StatusWindowController: NSWindowController {
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
     private let motionValue = NSTextField(labelWithString: "Checking...")
+    private let inputValue = NSTextField(labelWithString: "Checking...")
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
@@ -255,10 +308,11 @@ final class StatusWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(state: PowerState, idleSeconds: TimeInterval, motionStatus: String) {
+    func update(state: PowerState, idleSeconds: TimeInterval, motionStatus: String, inputStatus: String) {
         powerValue.stringValue = state.isOnACPower ? "Power Adapter" : "Battery"
         idleValue.stringValue = "\(Int(idleSeconds.rounded()))s idle"
         motionValue.stringValue = motionStatus
+        inputValue.stringValue = inputStatus
     }
 
     func showSettingsPage() {
@@ -329,6 +383,7 @@ final class StatusWindowController: NSWindowController {
         let title = heading("MagSafe Watch")
         let body = paragraph("MagSafe Watch runs quietly in the menu bar and watches for accidental power cable disconnections. When your Mac switches to battery power, it checks whether the Mac appears stationary before warning you.")
         let details = paragraph("The app uses macOS power-source events for charger connect/disconnect state. If motion sensor events are available on this Mac, it samples movement after unplug. If not, it can fall back to idle-time checks.")
+        let input = paragraph("External keyboard and mouse input is treated differently from built-in laptop input. External input means the Mac may still be sitting on your desk, so the app can keep warning you even while you are typing or using a mouse.")
 
         let settingsButton = NSButton(title: "Review Settings", target: self, action: #selector(openSettingsPage))
         settingsButton.bezelStyle = .rounded
@@ -337,7 +392,7 @@ final class StatusWindowController: NSWindowController {
         notificationsButton.bezelStyle = .rounded
 
         let buttons = row([settingsButton, notificationsButton])
-        return pageStack([title, body, details, buttons])
+        return pageStack([title, body, details, input, buttons])
     }
 
     private func buildSettingsPage() -> NSView {
@@ -348,10 +403,11 @@ final class StatusWindowController: NSWindowController {
             checkbox(title: "Monitor MagSafe and power adapter changes", isOn: settings.monitorEnabled, action: #selector(toggleMonitor(_:))),
             checkbox(title: "Use motion detection when sensor events are available", isOn: settings.motionDetectionEnabled, action: #selector(toggleMotionDetection(_:))),
             checkbox(title: "Use idle-time fallback when motion data is unavailable", isOn: settings.idleFallbackEnabled, action: #selector(toggleIdleFallback(_:))),
+            checkbox(title: "Treat external keyboard or mouse input as desk activity", isOn: settings.externalInputDeskSignalEnabled, action: #selector(toggleExternalInputDeskSignal(_:))),
             checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:)))
         ]
 
-        let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.repeatAlertInterval))s repeat reminders.")
+        let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.inputActivityWindow))s input window, \(Int(settings.repeatAlertInterval))s repeat reminders.")
         let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
         configButton.bezelStyle = .rounded
 
@@ -384,11 +440,13 @@ final class StatusWindowController: NSWindowController {
         let powerLabel = label("Power")
         let idleLabel = label("Activity")
         let motionLabel = label("Motion")
+        let inputLabel = label("Input")
 
         let grid = NSGridView(views: [
             [powerLabel, powerValue],
             [idleLabel, idleValue],
-            [motionLabel, motionValue]
+            [motionLabel, motionValue],
+            [inputLabel, inputValue]
         ])
         grid.rowSpacing = 8
         grid.columnSpacing = 18
@@ -475,6 +533,11 @@ final class StatusWindowController: NSWindowController {
 
     @objc private func toggleRepeatReminders(_ sender: NSButton) {
         settings.repeatRemindersEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleExternalInputDeskSignal(_ sender: NSButton) {
+        settings.externalInputDeskSignalEnabled = sender.state == .on
         settings.save()
     }
 
@@ -715,6 +778,127 @@ enum UserActivity {
     }
 }
 
+enum InputContext {
+    case externalRecent(age: TimeInterval)
+    case builtInRecent(age: TimeInterval)
+    case idle
+}
+
+final class InputActivityMonitor {
+    private var manager: IOHIDManager?
+    private var lastExternalInputAt: Date?
+    private var lastBuiltInInputAt: Date?
+
+    var statusDescription: String {
+        let externalAge = ageDescription(lastExternalInputAt)
+        let builtInAge = ageDescription(lastBuiltInInputAt)
+        return "External \(externalAge), built-in \(builtInAge)"
+    }
+
+    func start() {
+        stop()
+
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        self.manager = manager
+
+        let matches: [[String: Int]] = [
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_GenericDesktop,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_GD_Keyboard
+            ],
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_GenericDesktop,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_GD_Mouse
+            ],
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_GenericDesktop,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_GD_Pointer
+            ],
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_Digitizer,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_Dig_TouchPad
+            ]
+        ]
+        IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
+
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        IOHIDManagerRegisterInputValueCallback(manager, { context, _, _, value in
+            guard let context else { return }
+            let monitor = Unmanaged<InputActivityMonitor>.fromOpaque(context).takeUnretainedValue()
+            monitor.record(value: value)
+        }, context)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+    }
+
+    func stop() {
+        if let manager {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+        manager = nil
+    }
+
+    func context(recentThreshold: TimeInterval) -> InputContext {
+        let now = Date()
+        let externalAge = lastExternalInputAt.map { now.timeIntervalSince($0) }
+        let builtInAge = lastBuiltInInputAt.map { now.timeIntervalSince($0) }
+
+        if let externalAge, externalAge <= recentThreshold {
+            return .externalRecent(age: externalAge)
+        }
+        if let builtInAge, builtInAge <= recentThreshold {
+            return .builtInRecent(age: builtInAge)
+        }
+        return .idle
+    }
+
+    private func record(value: IOHIDValue) {
+        let element = IOHIDValueGetElement(value)
+        let usagePage = IOHIDElementGetUsagePage(element)
+        let usage = IOHIDElementGetUsage(element)
+        guard IOHIDValueGetIntegerValue(value) != 0 || usagePage == kHIDPage_GenericDesktop else {
+            return
+        }
+
+        let device = IOHIDElementGetDevice(element)
+        if isBuiltIn(device: device) {
+            lastBuiltInInputAt = Date()
+        } else {
+            lastExternalInputAt = Date()
+        }
+        _ = usage
+    }
+
+    private func isBuiltIn(device: IOHIDDevice) -> Bool {
+        if let builtIn = IOHIDDeviceGetProperty(device, kIOHIDBuiltInKey as CFString) {
+            if CFGetTypeID(builtIn) == CFBooleanGetTypeID() {
+                return CFBooleanGetValue((builtIn as! CFBoolean))
+            }
+            if let number = builtIn as? NSNumber {
+                return number.boolValue
+            }
+        }
+
+        let product = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "").lowercased()
+        let transport = (IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "").lowercased()
+
+        if product.contains("internal") || product.contains("built-in") || product.contains("trackpad") {
+            return true
+        }
+        if transport.contains("usb") || transport.contains("bluetooth") {
+            return false
+        }
+        return false
+    }
+
+    private func ageDescription(_ date: Date?) -> String {
+        guard let date else { return "none" }
+        let age = max(0, Int(Date().timeIntervalSince(date).rounded()))
+        return "\(age)s ago"
+    }
+}
+
 final class AlertNotifier {
     private let settings: AppSettings
 
@@ -778,6 +962,7 @@ final class AppSettings {
     var monitorEnabled: Bool
     var motionDetectionEnabled: Bool
     var idleFallbackEnabled: Bool
+    var externalInputDeskSignalEnabled: Bool
     var repeatRemindersEnabled: Bool
     var localNotificationsEnabled: Bool
     var soundEnabled: Bool
@@ -785,6 +970,7 @@ final class AppSettings {
     var stationaryIdleThreshold: TimeInterval
     var repeatAlertInterval: TimeInterval
     var motionSampleWindow: TimeInterval
+    var inputActivityWindow: TimeInterval
     var movementThreshold: Double
     var webhookURL: URL?
     let configFileURL: URL
@@ -801,12 +987,14 @@ final class AppSettings {
               "monitorEnabled": true,
               "motionDetectionEnabled": true,
               "idleFallbackEnabled": true,
+              "externalInputDeskSignalEnabled": true,
               "repeatRemindersEnabled": true,
               "localNotificationsEnabled": true,
               "soundEnabled": true,
               "webhookNotificationsEnabled": false,
               "stationaryIdleThresholdSeconds": 90,
               "motionSampleWindowSeconds": 10,
+              "inputActivityWindowSeconds": 15,
               "movementThresholdG": 0.08,
               "repeatAlertIntervalSeconds": 300,
               "webhookURL": ""
@@ -821,12 +1009,14 @@ final class AppSettings {
         monitorEnabled = object["monitorEnabled"] as? Bool ?? true
         motionDetectionEnabled = object["motionDetectionEnabled"] as? Bool ?? true
         idleFallbackEnabled = object["idleFallbackEnabled"] as? Bool ?? true
+        externalInputDeskSignalEnabled = object["externalInputDeskSignalEnabled"] as? Bool ?? true
         repeatRemindersEnabled = object["repeatRemindersEnabled"] as? Bool ?? true
         localNotificationsEnabled = object["localNotificationsEnabled"] as? Bool ?? true
         soundEnabled = object["soundEnabled"] as? Bool ?? true
         webhookNotificationsEnabled = object["webhookNotificationsEnabled"] as? Bool ?? false
         stationaryIdleThreshold = object["stationaryIdleThresholdSeconds"] as? TimeInterval ?? 90
         motionSampleWindow = object["motionSampleWindowSeconds"] as? TimeInterval ?? 10
+        inputActivityWindow = object["inputActivityWindowSeconds"] as? TimeInterval ?? 15
         movementThreshold = object["movementThresholdG"] as? Double ?? 0.08
         repeatAlertInterval = object["repeatAlertIntervalSeconds"] as? TimeInterval ?? 300
 
@@ -842,12 +1032,14 @@ final class AppSettings {
             "monitorEnabled": monitorEnabled,
             "motionDetectionEnabled": motionDetectionEnabled,
             "idleFallbackEnabled": idleFallbackEnabled,
+            "externalInputDeskSignalEnabled": externalInputDeskSignalEnabled,
             "repeatRemindersEnabled": repeatRemindersEnabled,
             "localNotificationsEnabled": localNotificationsEnabled,
             "soundEnabled": soundEnabled,
             "webhookNotificationsEnabled": webhookNotificationsEnabled,
             "stationaryIdleThresholdSeconds": stationaryIdleThreshold,
             "motionSampleWindowSeconds": motionSampleWindow,
+            "inputActivityWindowSeconds": inputActivityWindow,
             "movementThresholdG": movementThreshold,
             "repeatAlertIntervalSeconds": repeatAlertInterval,
             "webhookURL": webhookURL?.absoluteString ?? ""

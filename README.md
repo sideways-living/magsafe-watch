@@ -15,6 +15,10 @@ events, when the Mac model exposes them to user-space apps:
 - charger disconnects and the Mac stays motionless: alert
 - charger disconnects and the Mac is picked up or moved: suppress the first alert
 - if no motion sensor is available, fall back to idle-time detection
+- recent external keyboard or mouse input can count as desk activity, so the app
+  can still alert while you are actively using the Mac at your desk
+- recent built-in keyboard or trackpad input is treated as more likely intentional
+  laptop use and can suppress the fallback alert
 - repeat reminders continue while the Mac remains on battery and motionless
 
 ## Build
@@ -37,7 +41,7 @@ notification permission the first time.
 The window has separate pages:
 
 - Intro: explains what the app does and how it decides whether an unplug looks accidental
-- Settings: switches for monitoring, motion detection, idle fallback, and repeat reminders
+- Settings: switches for monitoring, motion detection, idle fallback, external input detection, and repeat reminders
 - Notifications: switches for macOS banners, alert sound, and webhook push alerts
 - Status: current power source, idle time, and latest motion result
 
@@ -70,12 +74,14 @@ Example:
   "monitorEnabled": true,
   "motionDetectionEnabled": true,
   "idleFallbackEnabled": true,
+  "externalInputDeskSignalEnabled": true,
   "repeatRemindersEnabled": true,
   "localNotificationsEnabled": true,
   "soundEnabled": true,
   "webhookNotificationsEnabled": false,
   "stationaryIdleThresholdSeconds": 90,
   "motionSampleWindowSeconds": 10,
+  "inputActivityWindowSeconds": 15,
   "movementThresholdG": 0.08,
   "repeatAlertIntervalSeconds": 300,
   "webhookURL": ""
