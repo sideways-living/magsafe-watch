@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/.build/release"
-APP_DIR="$ROOT_DIR/outputs/MagSafe Sentry.app"
+APP_DIR="$ROOT_DIR/outputs/MagSafe Watch.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -14,7 +14,7 @@ swift build -c release --package-path "$ROOT_DIR"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$BUILD_DIR/MagSafeSentry" "$MACOS_DIR/MagSafe Sentry"
+cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -24,13 +24,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>MagSafe Sentry</string>
+  <string>MagSafe Watch</string>
   <key>CFBundleIdentifier</key>
-  <string>local.magsafesentry.app</string>
+  <string>local.magsafewatch.app</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>MagSafe Sentry</string>
+  <string>MagSafe Watch</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

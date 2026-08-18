@@ -3,16 +3,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "MagSafeSentry",
+    name: "MagSafeWatch",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "MagSafeSentry", targets: ["MagSafeSentry"])
+        .executable(name: "MagSafeWatch", targets: ["MagSafeWatch"])
     ],
     targets: [
         .executableTarget(
-            name: "MagSafeSentry",
+            name: "MagSafeWatch",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("IOKit"),

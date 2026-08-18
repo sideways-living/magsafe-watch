@@ -1,6 +1,6 @@
-# MagSafe Sentry
+# MagSafe Watch
 
-MagSafe Sentry is a small macOS app that watches for AC power changes. When the
+MagSafe Watch is a small macOS app that watches for AC power changes. When the
 Mac switches to battery power and does not physically move, it plays a sound and
 posts a local macOS notification.
 
@@ -26,7 +26,7 @@ events, when the Mac model exposes them to user-space apps:
 The app bundle is written to:
 
 ```text
-outputs/MagSafe Sentry.app
+outputs/MagSafe Watch.app
 ```
 
 ## Run
@@ -53,7 +53,7 @@ To start it automatically at login:
 The app creates a config file at:
 
 ```text
-~/Library/Application Support/MagSafeSentry/config.json
+~/Library/Application Support/MagSafeWatch/config.json
 ```
 
 Example:

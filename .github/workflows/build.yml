@@ -17,5 +17,5 @@ jobs:
 
       - name: Verify app bundle
         run: |
-          codesign --verify --deep --strict --verbose=2 "outputs/MagSafe Sentry.app"
-          plutil -lint "outputs/MagSafe Sentry.app/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "outputs/MagSafe Watch.app"
+          plutil -lint "outputs/MagSafe Watch.app/Contents/Info.plist"

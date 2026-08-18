@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/outputs/MagSafe Sentry.app"
-PLIST="$HOME/Library/LaunchAgents/local.magsafesentry.app.plist"
+APP_DIR="$ROOT_DIR/outputs/MagSafe Watch.app"
+PLIST="$HOME/Library/LaunchAgents/local.magsafewatch.app.plist"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Build the app first with ./scripts/build_app.sh" >&2
@@ -18,7 +18,7 @@ cat > "$PLIST" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>local.magsafesentry.app</string>
+  <string>local.magsafewatch.app</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/open</string>
@@ -32,6 +32,6 @@ PLIST
 
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl enable "gui/$(id -u)/local.magsafesentry.app"
+launchctl enable "gui/$(id -u)/local.magsafewatch.app"
 
 echo "$PLIST"

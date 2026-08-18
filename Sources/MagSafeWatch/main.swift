@@ -7,7 +7,7 @@ import UserNotifications
 
 @main
 @MainActor
-final class MagSafeSentryApp: NSObject, NSApplicationDelegate {
+final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private let monitor = PowerMonitor()
     private let motionClassifier = MotionClassifier()
     private let notifier = AlertNotifier()
@@ -38,10 +38,10 @@ final class MagSafeSentryApp: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Sentry")
+        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "MagSafe Sentry", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "MagSafe Watch", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Show Status Window", action: #selector(showStatusWindow), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "Send Test Alert", action: #selector(sendTestAlert), keyEquivalent: "t"))
@@ -171,7 +171,7 @@ final class MagSafeSentryApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func sendTestAlert() {
-        notifier.alert(title: "MagSafe Sentry test", body: "Alerts are working on this Mac.")
+        notifier.alert(title: "MagSafe Watch test", body: "Alerts are working on this Mac.")
     }
 
     @objc private func showStatusWindow() {
@@ -217,7 +217,7 @@ final class StatusWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "MagSafe Sentry"
+        window.title = "MagSafe Watch"
         window.center()
         super.init(window: window)
         window.contentView = buildContentView()
@@ -238,7 +238,7 @@ final class StatusWindowController: NSWindowController {
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let title = NSTextField(labelWithString: "MagSafe Sentry is running")
+        let title = NSTextField(labelWithString: "MagSafe Watch is running")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
 
         let description = NSTextField(wrappingLabelWithString: "You can close this window and the charger monitor will keep running from the menu bar.")
@@ -588,7 +588,7 @@ final class AppSettings {
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MagSafeSentry", isDirectory: true)
+            .appendingPathComponent("MagSafeWatch", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 
         configFileURL = support.appendingPathComponent("config.json")
