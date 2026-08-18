@@ -10,8 +10,8 @@ import UserNotifications
 final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private let monitor = PowerMonitor()
     private let motionClassifier = MotionClassifier()
-    private let notifier = AlertNotifier()
     private let settings = AppSettings()
+    private lazy var notifier = AlertNotifier(settings: settings)
     private var statusItem: NSStatusItem!
     private var statusWindowController: StatusWindowController?
     private var reminderTimer: Timer?
@@ -56,6 +56,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         updateStatusIcon(for: state)
         statusWindowController?.update(state: state, idleSeconds: UserActivity.idleSeconds, motionStatus: motionClassifier.statusDescription)
 
+        guard settings.monitorEnabled else { return }
+
         if state.isOnACPower {
             motionCheckID = UUID()
             reminderTimer?.invalidate()
@@ -72,6 +74,11 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     }
 
     private func classifyDisconnect(state: PowerState) {
+        guard settings.motionDetectionEnabled else {
+            classifyDisconnectWithIdleFallback(state: state, reason: "Motion detection is switched off.")
+            return
+        }
+
         let checkID = UUID()
         motionCheckID = checkID
         statusWindowController?.update(state: state, idleSeconds: UserActivity.idleSeconds, motionStatus: "Sampling motion...")
@@ -94,15 +101,17 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             case .moving:
                 self.scheduleBatteryReminder()
             case .unavailable:
-                let idleSeconds = UserActivity.idleSeconds
-                guard idleSeconds >= self.settings.stationaryIdleThreshold else {
-                    self.scheduleBatteryReminder()
-                    return
-                }
-                self.sendAccidentalUnplugAlert(source: state.sourceDescription, reason: result.alertReason + " Idle fallback: \(Int(idleSeconds.rounded()))s.")
+                self.classifyDisconnectWithIdleFallback(state: state, reason: result.alertReason)
                 self.scheduleBatteryReminder()
             }
         }
+    }
+
+    private func classifyDisconnectWithIdleFallback(state: PowerState, reason: String) {
+        guard settings.idleFallbackEnabled else { return }
+        let idleSeconds = UserActivity.idleSeconds
+        guard idleSeconds >= settings.stationaryIdleThreshold else { return }
+        sendAccidentalUnplugAlert(source: state.sourceDescription, reason: reason + " Idle fallback: \(Int(idleSeconds.rounded()))s.")
     }
 
     private func sendAccidentalUnplugAlert(source: String, reason: String) {
@@ -117,6 +126,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleBatteryReminder() {
+        guard settings.repeatRemindersEnabled else { return }
         reminderTimer?.invalidate()
         reminderTimer = Timer.scheduledTimer(
             timeInterval: settings.repeatAlertInterval,
@@ -133,6 +143,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     }
 
     private func classifyReminder() {
+        guard settings.repeatRemindersEnabled else { return }
+        guard settings.motionDetectionEnabled else {
+            sendIdleFallbackReminder()
+            return
+        }
+
         motionClassifier.classify(
             sampleDuration: settings.motionSampleWindow,
             movementThreshold: settings.movementThreshold
@@ -157,17 +173,22 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             case .moving:
                 break
             case .unavailable:
-                guard UserActivity.idleSeconds >= self.settings.stationaryIdleThreshold else { return }
-                self.notifier.alert(
-                    title: "Still on battery",
-                    body: "Motion sensor is unavailable and the Mac has been idle."
-                )
-                self.notifier.sendWebhookIfConfigured(
-                    title: "MacBook still unplugged",
-                    message: "Motion sensor is unavailable and the Mac has been idle."
-                )
+                self.sendIdleFallbackReminder()
             }
         }
+    }
+
+    private func sendIdleFallbackReminder() {
+        guard settings.idleFallbackEnabled else { return }
+        guard UserActivity.idleSeconds >= settings.stationaryIdleThreshold else { return }
+        notifier.alert(
+            title: "Still on battery",
+            body: "Motion detection is unavailable or switched off, and the Mac has been idle."
+        )
+        notifier.sendWebhookIfConfigured(
+            title: "MacBook still unplugged",
+            message: "Motion detection is unavailable or switched off, and the Mac has been idle."
+        )
     }
 
     @objc private func sendTestAlert() {
@@ -179,7 +200,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
             statusWindowController = StatusWindowController(
                 settings: settings,
                 testAlertHandler: { [weak self] in self?.sendTestAlert() },
-                openSettingsHandler: { [weak self] in self?.openSettings() }
+                openConfigHandler: { [weak self] in self?.openConfigFile() }
             )
         }
 
@@ -190,6 +211,11 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        showStatusWindow()
+        statusWindowController?.showSettingsPage()
+    }
+
+    private func openConfigFile() {
         NSWorkspace.shared.open(settings.configFileURL)
     }
 
@@ -201,18 +227,20 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 final class StatusWindowController: NSWindowController {
     private let settings: AppSettings
     private let testAlertHandler: () -> Void
-    private let openSettingsHandler: () -> Void
+    private let openConfigHandler: () -> Void
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
     private let motionValue = NSTextField(labelWithString: "Checking...")
+    private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
+    private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, openSettingsHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
-        self.openSettingsHandler = openSettingsHandler
+        self.openConfigHandler = openConfigHandler
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 280),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -233,37 +261,129 @@ final class StatusWindowController: NSWindowController {
         motionValue.stringValue = motionStatus
     }
 
+    func showSettingsPage() {
+        selectPage(1)
+    }
+
     private func buildContentView() -> NSView {
         let content = NSView()
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let title = NSTextField(labelWithString: "MagSafe Watch is running")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
+        pageTabs.selectedSegment = 0
+        pageTabs.target = self
+        pageTabs.action = #selector(changePage)
+        pageTabs.segmentStyle = .rounded
+        pageTabs.translatesAutoresizingMaskIntoConstraints = false
 
-        let description = NSTextField(wrappingLabelWithString: "You can close this window and the charger monitor will keep running from the menu bar.")
-        description.textColor = .secondaryLabelColor
+        pageContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        let powerLabel = NSTextField(labelWithString: "Power")
-        powerLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        content.addSubview(pageTabs)
+        content.addSubview(pageContainer)
 
-        let idleLabel = NSTextField(labelWithString: "Activity")
-        idleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        NSLayoutConstraint.activate([
+            pageTabs.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            pageTabs.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
+            pageTabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            pageContainer.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            pageContainer.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            pageContainer.topAnchor.constraint(equalTo: pageTabs.bottomAnchor, constant: 18),
+            pageContainer.bottomAnchor.constraint(equalTo: content.bottomAnchor)
+        ])
 
-        let motionLabel = NSTextField(labelWithString: "Motion")
-        motionLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        selectPage(0)
+        return content
+    }
 
-        let threshold = NSTextField(wrappingLabelWithString: "Accidental-unplug alerts fire when power disconnects and the Mac stays physically still for \(Int(settings.motionSampleWindow))s. If motion data is unavailable, the app falls back to \(Int(settings.stationaryIdleThreshold))s idle detection.")
-        threshold.textColor = .secondaryLabelColor
+    @objc private func changePage() {
+        selectPage(pageTabs.selectedSegment)
+    }
 
-        let testButton = NSButton(title: "Send Test Alert", target: self, action: #selector(sendTestAlert))
-        testButton.bezelStyle = .rounded
+    private func selectPage(_ index: Int) {
+        pageTabs.selectedSegment = index
+        pageContainer.subviews.forEach { $0.removeFromSuperview() }
 
-        let settingsButton = NSButton(title: "Open Settings", target: self, action: #selector(openSettings))
+        let page: NSView
+        switch index {
+        case 1:
+            page = buildSettingsPage()
+        case 2:
+            page = buildNotificationsPage()
+        case 3:
+            page = buildStatusPage()
+        default:
+            page = buildIntroPage()
+        }
+
+        page.translatesAutoresizingMaskIntoConstraints = false
+        pageContainer.addSubview(page)
+        NSLayoutConstraint.activate([
+            page.leadingAnchor.constraint(equalTo: pageContainer.leadingAnchor, constant: 24),
+            page.trailingAnchor.constraint(equalTo: pageContainer.trailingAnchor, constant: -24),
+            page.topAnchor.constraint(equalTo: pageContainer.topAnchor),
+            page.bottomAnchor.constraint(lessThanOrEqualTo: pageContainer.bottomAnchor, constant: -24)
+        ])
+    }
+
+    private func buildIntroPage() -> NSView {
+        let title = heading("MagSafe Watch")
+        let body = paragraph("MagSafe Watch runs quietly in the menu bar and watches for accidental power cable disconnections. When your Mac switches to battery power, it checks whether the Mac appears stationary before warning you.")
+        let details = paragraph("The app uses macOS power-source events for charger connect/disconnect state. If motion sensor events are available on this Mac, it samples movement after unplug. If not, it can fall back to idle-time checks.")
+
+        let settingsButton = NSButton(title: "Review Settings", target: self, action: #selector(openSettingsPage))
         settingsButton.bezelStyle = .rounded
 
-        let quitButton = NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:)))
-        quitButton.bezelStyle = .rounded
+        let notificationsButton = NSButton(title: "Notification Types", target: self, action: #selector(openNotificationsPage))
+        notificationsButton.bezelStyle = .rounded
+
+        let buttons = row([settingsButton, notificationsButton])
+        return pageStack([title, body, details, buttons])
+    }
+
+    private func buildSettingsPage() -> NSView {
+        let title = heading("Settings")
+        let body = paragraph("Control how MagSafe Watch decides whether a power disconnection looks accidental.")
+
+        let controls: [NSView] = [
+            checkbox(title: "Monitor MagSafe and power adapter changes", isOn: settings.monitorEnabled, action: #selector(toggleMonitor(_:))),
+            checkbox(title: "Use motion detection when sensor events are available", isOn: settings.motionDetectionEnabled, action: #selector(toggleMotionDetection(_:))),
+            checkbox(title: "Use idle-time fallback when motion data is unavailable", isOn: settings.idleFallbackEnabled, action: #selector(toggleIdleFallback(_:))),
+            checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:)))
+        ]
+
+        let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.repeatAlertInterval))s repeat reminders.")
+        let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
+        configButton.bezelStyle = .rounded
+
+        return pageStack([title, body] + controls + [timing, configButton])
+    }
+
+    private func buildNotificationsPage() -> NSView {
+        let title = heading("Notifications")
+        let body = paragraph("Choose how MagSafe Watch gets your attention when it thinks the cable was pulled accidentally.")
+
+        let controls: [NSView] = [
+            checkbox(title: "Show macOS notification banners", isOn: settings.localNotificationsEnabled, action: #selector(toggleLocalNotifications(_:))),
+            checkbox(title: "Play alert sound on this Mac", isOn: settings.soundEnabled, action: #selector(toggleSound(_:))),
+            checkbox(title: "Send webhook push notifications for iPhone or Apple Watch", isOn: settings.webhookNotificationsEnabled, action: #selector(toggleWebhook(_:)))
+        ]
+
+        let webhook = paragraph(settings.webhookURL == nil ? "Webhook URL is not configured. Add one in Advanced Config to use iPhone or Apple Watch push services." : "Webhook URL is configured.")
+        let testButton = NSButton(title: "Send Test Alert", target: self, action: #selector(sendTestAlert))
+        testButton.bezelStyle = .rounded
+        let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
+        configButton.bezelStyle = .rounded
+
+        return pageStack([title, body] + controls + [webhook, row([testButton, configButton])])
+    }
+
+    private func buildStatusPage() -> NSView {
+        let title = heading("Status")
+        let description = paragraph("You can close this window and the charger monitor will keep running from the menu bar.")
+
+        let powerLabel = label("Power")
+        let idleLabel = label("Activity")
+        let motionLabel = label("Motion")
 
         let grid = NSGridView(views: [
             [powerLabel, powerValue],
@@ -274,36 +394,103 @@ final class StatusWindowController: NSWindowController {
         grid.columnSpacing = 18
         grid.xPlacement = .leading
 
-        let buttons = NSStackView(views: [testButton, settingsButton, quitButton])
-        buttons.orientation = .horizontal
-        buttons.spacing = 8
-        buttons.alignment = .centerY
+        let quitButton = NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:)))
+        quitButton.bezelStyle = .rounded
 
-        let stack = NSStackView(views: [title, description, grid, threshold, buttons])
+        return pageStack([title, description, grid, quitButton])
+    }
+
+    private func pageStack(_ views: [NSView]) -> NSView {
+        let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.spacing = 16
         stack.alignment = .leading
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        return stack
+    }
 
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
-            description.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            threshold.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        ])
+    private func row(_ views: [NSView]) -> NSStackView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = 10
+        stack.alignment = .centerY
+        return stack
+    }
 
-        return content
+    private func heading(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: 26, weight: .semibold)
+        return field
+    }
+
+    private func paragraph(_ text: String) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.textColor = .secondaryLabelColor
+        field.maximumNumberOfLines = 0
+        field.widthAnchor.constraint(lessThanOrEqualToConstant: 540).isActive = true
+        return field
+    }
+
+    private func label(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: 13, weight: .medium)
+        return field
+    }
+
+    private func checkbox(title: String, isOn: Bool, action: Selector) -> NSButton {
+        let button = NSButton(checkboxWithTitle: title, target: self, action: action)
+        button.state = isOn ? .on : .off
+        return button
     }
 
     @objc private func sendTestAlert() {
         testAlertHandler()
     }
 
-    @objc private func openSettings() {
-        openSettingsHandler()
+    @objc private func openSettingsPage() {
+        selectPage(1)
+    }
+
+    @objc private func openNotificationsPage() {
+        selectPage(2)
+    }
+
+    @objc private func openConfig() {
+        openConfigHandler()
+    }
+
+    @objc private func toggleMonitor(_ sender: NSButton) {
+        settings.monitorEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleMotionDetection(_ sender: NSButton) {
+        settings.motionDetectionEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleIdleFallback(_ sender: NSButton) {
+        settings.idleFallbackEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleRepeatReminders(_ sender: NSButton) {
+        settings.repeatRemindersEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleLocalNotifications(_ sender: NSButton) {
+        settings.localNotificationsEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleSound(_ sender: NSButton) {
+        settings.soundEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func toggleWebhook(_ sender: NSButton) {
+        settings.webhookNotificationsEnabled = sender.state == .on
+        settings.save()
     }
 }
 
@@ -529,7 +716,11 @@ enum UserActivity {
 }
 
 final class AlertNotifier {
-    private let settings = AppSettings()
+    private let settings: AppSettings
+
+    init(settings: AppSettings) {
+        self.settings = settings
+    }
 
     func requestAuthorization() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -543,7 +734,11 @@ final class AlertNotifier {
     }
 
     func alert(title: String, body: String) {
-        NSSound(named: "Basso")?.play()
+        if settings.soundEnabled {
+            NSSound(named: "Basso")?.play()
+        }
+
+        guard settings.localNotificationsEnabled else { return }
 
         let content = UNMutableNotificationContent()
         content.title = title
@@ -559,6 +754,7 @@ final class AlertNotifier {
     }
 
     func sendWebhookIfConfigured(title: String, message: String) {
+        guard settings.webhookNotificationsEnabled else { return }
         guard let webhookURL = settings.webhookURL else { return }
 
         var request = URLRequest(url: webhookURL)
@@ -579,11 +775,18 @@ final class AlertNotifier {
 }
 
 final class AppSettings {
-    let stationaryIdleThreshold: TimeInterval
-    let repeatAlertInterval: TimeInterval
-    let motionSampleWindow: TimeInterval
-    let movementThreshold: Double
-    let webhookURL: URL?
+    var monitorEnabled: Bool
+    var motionDetectionEnabled: Bool
+    var idleFallbackEnabled: Bool
+    var repeatRemindersEnabled: Bool
+    var localNotificationsEnabled: Bool
+    var soundEnabled: Bool
+    var webhookNotificationsEnabled: Bool
+    var stationaryIdleThreshold: TimeInterval
+    var repeatAlertInterval: TimeInterval
+    var motionSampleWindow: TimeInterval
+    var movementThreshold: Double
+    var webhookURL: URL?
     let configFileURL: URL
 
     init() {
@@ -595,6 +798,13 @@ final class AppSettings {
         if !FileManager.default.fileExists(atPath: configFileURL.path) {
             let defaults = """
             {
+              "monitorEnabled": true,
+              "motionDetectionEnabled": true,
+              "idleFallbackEnabled": true,
+              "repeatRemindersEnabled": true,
+              "localNotificationsEnabled": true,
+              "soundEnabled": true,
+              "webhookNotificationsEnabled": false,
               "stationaryIdleThresholdSeconds": 90,
               "motionSampleWindowSeconds": 10,
               "movementThresholdG": 0.08,
@@ -608,6 +818,13 @@ final class AppSettings {
         let data = (try? Data(contentsOf: configFileURL)) ?? Data()
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
+        monitorEnabled = object["monitorEnabled"] as? Bool ?? true
+        motionDetectionEnabled = object["motionDetectionEnabled"] as? Bool ?? true
+        idleFallbackEnabled = object["idleFallbackEnabled"] as? Bool ?? true
+        repeatRemindersEnabled = object["repeatRemindersEnabled"] as? Bool ?? true
+        localNotificationsEnabled = object["localNotificationsEnabled"] as? Bool ?? true
+        soundEnabled = object["soundEnabled"] as? Bool ?? true
+        webhookNotificationsEnabled = object["webhookNotificationsEnabled"] as? Bool ?? false
         stationaryIdleThreshold = object["stationaryIdleThresholdSeconds"] as? TimeInterval ?? 90
         motionSampleWindow = object["motionSampleWindowSeconds"] as? TimeInterval ?? 10
         movementThreshold = object["movementThresholdG"] as? Double ?? 0.08
@@ -618,5 +835,27 @@ final class AppSettings {
         } else {
             webhookURL = nil
         }
+    }
+
+    func save() {
+        let object: [String: Any] = [
+            "monitorEnabled": monitorEnabled,
+            "motionDetectionEnabled": motionDetectionEnabled,
+            "idleFallbackEnabled": idleFallbackEnabled,
+            "repeatRemindersEnabled": repeatRemindersEnabled,
+            "localNotificationsEnabled": localNotificationsEnabled,
+            "soundEnabled": soundEnabled,
+            "webhookNotificationsEnabled": webhookNotificationsEnabled,
+            "stationaryIdleThresholdSeconds": stationaryIdleThreshold,
+            "motionSampleWindowSeconds": motionSampleWindow,
+            "movementThresholdG": movementThreshold,
+            "repeatAlertIntervalSeconds": repeatAlertInterval,
+            "webhookURL": webhookURL?.absoluteString ?? ""
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        try? data.write(to: configFileURL, options: .atomic)
     }
 }

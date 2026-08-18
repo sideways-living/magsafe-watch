@@ -31,8 +31,15 @@ outputs/MagSafe Watch.app
 
 ## Run
 
-Open the app bundle. A status window appears, and macOS will ask for
+Open the app bundle. An introduction window appears, and macOS will ask for
 notification permission the first time.
+
+The window has separate pages:
+
+- Intro: explains what the app does and how it decides whether an unplug looks accidental
+- Settings: switches for monitoring, motion detection, idle fallback, and repeat reminders
+- Notifications: switches for macOS banners, alert sound, and webhook push alerts
+- Status: current power source, idle time, and latest motion result
 
 You can close the window after launch. The menu-bar bolt icon keeps running and
 has:
@@ -60,6 +67,13 @@ Example:
 
 ```json
 {
+  "monitorEnabled": true,
+  "motionDetectionEnabled": true,
+  "idleFallbackEnabled": true,
+  "repeatRemindersEnabled": true,
+  "localNotificationsEnabled": true,
+  "soundEnabled": true,
+  "webhookNotificationsEnabled": false,
   "stationaryIdleThresholdSeconds": 90,
   "motionSampleWindowSeconds": 10,
   "movementThresholdG": 0.08,
