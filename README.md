@@ -118,3 +118,6 @@ there are two realistic paths:
 
 This prototype implements option 1 so it can be used immediately without a paid
 Apple Developer account or backend.
+
+See [ROADMAP.md](ROADMAP.md) for the planned native iPhone and Apple Watch
+helper app direction.
