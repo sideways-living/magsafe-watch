@@ -2,9 +2,9 @@
 
 ![MagSafe Watch logo](Assets/MagSafeWatchLogo.svg)
 
-MagSafe Watch is a small macOS app that watches for AC power changes. When the
-Mac switches to battery power and does not physically move, it plays a sound and
-posts a local macOS notification.
+MagSafe Watch is a small macOS app that watches for external power loss. When the
+Mac switches from a power adapter to battery and still appears to be at your
+desk, it plays a sound and posts a local macOS notification.
 
 The app uses the macOS power-source APIs directly:
 
@@ -14,8 +14,8 @@ The app uses the macOS power-source APIs directly:
 For accidental-unplug detection it then samples accelerometer-like HID sensor
 events, when the Mac model exposes them to user-space apps:
 
-- charger disconnects and the Mac stays motionless: alert
-- charger disconnects and the Mac is picked up or moved: suppress the first alert
+- external power is lost and the Mac stays motionless: alert
+- external power is lost and the Mac is picked up or moved: suppress the first alert
 - if no motion sensor is available, fall back to idle-time detection
 - recent external keyboard or mouse input can count as desk activity, so the app
   can still alert while you are actively using the Mac at your desk
@@ -52,6 +52,7 @@ has:
 
 - Show Status Window
 - Send Test Alert
+- Check for Updates
 - Open Settings
 - Quit
 
@@ -61,7 +62,10 @@ To start it automatically at login:
 ./scripts/install_login_item.sh
 ```
 
-## Settings
+## Concept And Settings
+
+The full product concept, detection model, and known limitations are documented
+in [docs/CONCEPT.md](docs/CONCEPT.md).
 
 The app creates a config file at:
 
@@ -105,8 +109,8 @@ Pushover, ntfy, IFTTT, Home Assistant, or your own endpoint. The app sends:
 
 ```json
 {
-  "title": "MacBook unplugged",
-  "message": "Power changed to Battery after 90s without input.",
+  "title": "MacBook power lost",
+  "message": "Power changed to Battery. Check the MagSafe cable, charger, or battery bank.",
   "source": "Your Mac Name"
 }
 ```
@@ -141,3 +145,6 @@ Apple Developer account or backend.
 
 See [ROADMAP.md](ROADMAP.md) for the planned native iPhone and Apple Watch
 helper app direction.
+
+The latest concept-documentation audit is in
+[docs/DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md).

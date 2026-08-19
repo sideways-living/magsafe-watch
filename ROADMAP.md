@@ -8,6 +8,9 @@ MagSafe Watch currently focuses on reliable Mac-side detection and notification:
 - Uses motion sensor events, when available, to decide whether the Mac moved.
 - Uses idle state and external keyboard/mouse activity as fallback desk-use signals.
 - Sends local macOS notifications, alert sounds, and optional webhook push alerts.
+- Checks for app updates through a configurable GitHub Releases feed.
+
+See `docs/CONCEPT.md` for the current detection model and limitations.
 
 ## Notification Provider Architecture
 
@@ -45,7 +48,7 @@ Potential benefits:
 Recommended eventual flow:
 
 1. Mac app detects external power loss.
-2. Mac app classifies likely accidental vs intentional unplug.
+2. Mac app classifies likely accidental vs intentional power loss.
 3. Mac app sends an event to a small backend or cloud function.
 4. Backend sends APNs push to the iPhone app.
 5. Apple forwards eligible alerts to Apple Watch.
