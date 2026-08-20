@@ -20,6 +20,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var batteryStatusMenuItem: NSMenuItem!
     private var statusWindowController: StatusWindowController?
     private var reminderTimer: Timer?
+    private var fullScreenWarningTimer: Timer?
+    private var fullScreenWarningController: FullScreenWarningWindowController?
+    private var fullScreenWarningID = UUID()
+    private var fullScreenSnoozedUntil: Date?
+    private var fullScreenSnoozeBatteryThreshold: Int?
+    private var accidentalDisconnectAlerted = false
     private var updateTimer: Timer?
     private var latestState = PowerState(isOnACPower: true, sourceDescription: "Unknown", batteryPercent: nil)
     private var motionCheckID = UUID()
@@ -95,9 +101,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             motionCheckID = UUID()
             reminderTimer?.invalidate()
             reminderTimer = nil
+            accidentalDisconnectAlerted = false
+            cancelFullScreenWarning()
             return
         }
 
+        showBatteryThresholdWarningIfNeeded(state: state)
         classifyDisconnect(state: state)
     }
 
@@ -226,6 +235,9 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func sendAccidentalUnplugAlert(source: String, reason: String) {
+        guard !accidentalDisconnectAlerted else { return }
+        accidentalDisconnectAlerted = true
+
         notifier.alert(
             title: "MacBook is running on battery",
             body: "Power changed to \(source). \(reason) Check the MagSafe cable."
@@ -234,6 +246,90 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             title: "MacBook unplugged",
             message: "Power changed to \(source). \(reason)"
         )
+        scheduleFullScreenWarning(reason: reason)
+    }
+
+    private func scheduleFullScreenWarning(reason: String, delay: TimeInterval = 30) {
+        guard settings.monitorEnabled, !latestState.isOnACPower else { return }
+        guard fullScreenSnoozeBatteryThreshold == nil else { return }
+        if let fullScreenSnoozedUntil {
+            guard Date() >= fullScreenSnoozedUntil else { return }
+            self.fullScreenSnoozedUntil = nil
+        }
+
+        let warningID = UUID()
+        fullScreenWarningID = warningID
+        fullScreenWarningTimer?.invalidate()
+        fullScreenWarningTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self,
+                      self.fullScreenWarningID == warningID,
+                      !self.latestState.isOnACPower else { return }
+                self.showFullScreenWarning(reason: reason)
+            }
+        }
+    }
+
+    private func showFullScreenWarning(reason: String) {
+        guard settings.monitorEnabled, !latestState.isOnACPower else { return }
+        if fullScreenWarningController == nil {
+            fullScreenWarningController = FullScreenWarningWindowController { [weak self] snooze in
+                self?.handleFullScreenSnooze(snooze)
+            }
+        }
+
+        fullScreenWarningController?.update(
+            batteryPercent: latestState.batteryPercent,
+            reason: reason
+        )
+        fullScreenWarningController?.showWarning()
+    }
+
+    private func handleFullScreenSnooze(_ snooze: WarningSnooze) {
+        fullScreenWarningController?.close()
+        fullScreenWarningController = nil
+        fullScreenWarningTimer?.invalidate()
+        fullScreenSnoozedUntil = nil
+        fullScreenSnoozeBatteryThreshold = nil
+
+        switch snooze {
+        case .minutes(let minutes):
+            let warningID = UUID()
+            fullScreenWarningID = warningID
+            fullScreenSnoozedUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            fullScreenWarningTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60), repeats: false) { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.fullScreenWarningID == warningID,
+                          !self.latestState.isOnACPower else { return }
+                    self.fullScreenSnoozedUntil = nil
+                    self.showFullScreenWarning(reason: "Snooze expired.")
+                }
+            }
+        case .batteryThreshold(let threshold):
+            fullScreenSnoozeBatteryThreshold = threshold
+            showBatteryThresholdWarningIfNeeded(state: latestState)
+        }
+    }
+
+    private func showBatteryThresholdWarningIfNeeded(state: PowerState) {
+        guard let threshold = fullScreenSnoozeBatteryThreshold,
+              !state.isOnACPower,
+              let batteryPercent = state.batteryPercent,
+              batteryPercent <= threshold else { return }
+
+        fullScreenSnoozeBatteryThreshold = nil
+        showFullScreenWarning(reason: "Battery has depleted to \(batteryPercent)%.")
+    }
+
+    private func cancelFullScreenWarning() {
+        fullScreenWarningID = UUID()
+        fullScreenWarningTimer?.invalidate()
+        fullScreenWarningTimer = nil
+        fullScreenSnoozedUntil = nil
+        fullScreenSnoozeBatteryThreshold = nil
+        fullScreenWarningController?.close()
+        fullScreenWarningController = nil
     }
 
     private func scheduleBatteryReminder() {
@@ -333,6 +429,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 testAlertHandler: { [weak self] in self?.sendTestAlert() },
                 checkForUpdatesHandler: { [weak self] in self?.checkForUpdates(manual: true) },
                 updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
+                monitorChangedHandler: { [weak self] in self?.handleMonitoringSettingChanged() },
                 openConfigHandler: { [weak self] in self?.openConfigFile() }
             )
         }
@@ -428,11 +525,17 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleMonitoringFromMenu() {
         settings.monitorEnabled.toggle()
         settings.save()
+        handleMonitoringSettingChanged()
+        refreshStatusMenu()
+    }
+
+    private func handleMonitoringSettingChanged() {
         if !settings.monitorEnabled {
             reminderTimer?.invalidate()
             reminderTimer = nil
+            accidentalDisconnectAlerted = false
+            cancelFullScreenWarning()
         }
-        refreshStatusMenu()
     }
 
     private func openConfigFile() {
@@ -444,11 +547,136 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+enum WarningSnooze {
+    case minutes(Int)
+    case batteryThreshold(Int)
+}
+
+final class FullScreenWarningWindowController: NSWindowController {
+    private let onSnooze: (WarningSnooze) -> Void
+    private let batteryValue = NSTextField(labelWithString: "Battery unknown")
+    private let reasonValue = NSTextField(wrappingLabelWithString: "")
+    private let snoozePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let snoozeOptions: [(title: String, value: WarningSnooze)] = [
+        ("Snooze for 5 min", .minutes(5)),
+        ("Snooze for 15 mins", .minutes(15)),
+        ("Snooze for 30 mins", .minutes(30)),
+        ("Until battery depletes to 20%", .batteryThreshold(20)),
+        ("Until battery depletes to 10%", .batteryThreshold(10)),
+        ("Until battery depletes to 5%", .batteryThreshold(5))
+    ]
+
+    init(onSnooze: @escaping (WarningSnooze) -> Void) {
+        self.onSnooze = onSnooze
+
+        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let window = NSWindow(
+            contentRect: screenFrame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = .black
+        super.init(window: window)
+        window.contentView = buildContentView()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(batteryPercent: Int?, reason: String) {
+        if let batteryPercent {
+            batteryValue.stringValue = "Battery \(batteryPercent)%"
+            batteryValue.textColor = batteryPercent <= 10 ? .systemRed : batteryPercent <= 25 ? .systemOrange : .systemGreen
+        } else {
+            batteryValue.stringValue = "Battery unknown"
+            batteryValue.textColor = .secondaryLabelColor
+        }
+        reasonValue.stringValue = reason
+    }
+
+    func showWarning() {
+        guard let window else { return }
+        if let screenFrame = NSScreen.main?.frame {
+            window.setFrame(screenFrame, display: true)
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func buildContentView() -> NSView {
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.black.cgColor
+
+        let title = NSTextField(labelWithString: "MagSafe cable disconnected")
+        title.font = .systemFont(ofSize: 54, weight: .bold)
+        title.textColor = .white
+        title.alignment = .center
+        title.lineBreakMode = .byWordWrapping
+        title.maximumNumberOfLines = 2
+
+        let body = NSTextField(wrappingLabelWithString: "Your MacBook is running on battery while it appears to be sitting still. Reconnect MagSafe or snooze this warning.")
+        body.font = .systemFont(ofSize: 24, weight: .regular)
+        body.textColor = .white
+        body.alignment = .center
+        body.maximumNumberOfLines = 0
+
+        batteryValue.font = .systemFont(ofSize: 28, weight: .semibold)
+        batteryValue.alignment = .center
+
+        reasonValue.font = .systemFont(ofSize: 15, weight: .regular)
+        reasonValue.textColor = .secondaryLabelColor
+        reasonValue.alignment = .center
+        reasonValue.maximumNumberOfLines = 0
+        reasonValue.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
+
+        snoozePopup.addItems(withTitles: snoozeOptions.map(\.title))
+        snoozePopup.selectItem(at: 0)
+
+        let snoozeButton = NSButton(title: "Snooze", target: self, action: #selector(snooze))
+        snoozeButton.bezelStyle = .rounded
+        snoozeButton.keyEquivalent = "\r"
+
+        let controls = NSStackView(views: [snoozePopup, snoozeButton])
+        controls.orientation = .horizontal
+        controls.spacing = 12
+        controls.alignment = .centerY
+
+        let stack = NSStackView(views: [title, body, batteryValue, reasonValue, controls])
+        stack.orientation = .vertical
+        stack.spacing = 24
+        stack.alignment = .centerX
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 64),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -64)
+        ])
+
+        return content
+    }
+
+    @objc private func snooze() {
+        let selectedIndex = snoozePopup.indexOfSelectedItem
+        guard snoozeOptions.indices.contains(selectedIndex) else { return }
+        onSnooze(snoozeOptions[selectedIndex].value)
+    }
+}
+
 final class StatusWindowController: NSWindowController {
     private let settings: AppSettings
     private let testAlertHandler: () -> Void
     private let checkForUpdatesHandler: () -> Void
     private let updateScheduleChangedHandler: () -> Void
+    private let monitorChangedHandler: () -> Void
     private let openConfigHandler: () -> Void
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
@@ -458,11 +686,12 @@ final class StatusWindowController: NSWindowController {
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
         self.checkForUpdatesHandler = checkForUpdatesHandler
         self.updateScheduleChangedHandler = updateScheduleChangedHandler
+        self.monitorChangedHandler = monitorChangedHandler
         self.openConfigHandler = openConfigHandler
 
         let window = NSWindow(
@@ -715,6 +944,7 @@ final class StatusWindowController: NSWindowController {
     @objc private func toggleMonitor(_ sender: NSButton) {
         settings.monitorEnabled = sender.state == .on
         settings.save()
+        monitorChangedHandler()
     }
 
     @objc private func toggleMotionDetection(_ sender: NSButton) {
