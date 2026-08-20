@@ -273,7 +273,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showFullScreenWarning(reason: String) {
         guard settings.monitorEnabled, !latestState.isOnACPower else { return }
         if fullScreenWarningController == nil {
-            fullScreenWarningController = FullScreenWarningWindowController { [weak self] snooze in
+            fullScreenWarningController = FullScreenWarningWindowController(settings: settings) { [weak self] snooze in
                 self?.handleFullScreenSnooze(snooze)
             }
         }
@@ -552,21 +552,28 @@ enum WarningSnooze {
     case batteryThreshold(Int)
 }
 
+enum SnoozeKind: String {
+    case time
+    case battery
+}
+
+struct SnoozeOption {
+    let title: String
+    let value: WarningSnooze
+    let isCustom: Bool
+}
+
 final class FullScreenWarningWindowController: NSWindowController {
+    private let settings: AppSettings
     private let onSnooze: (WarningSnooze) -> Void
     private let batteryValue = NSTextField(labelWithString: "Battery unknown")
     private let reasonValue = NSTextField(wrappingLabelWithString: "")
-    private let snoozePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let snoozeOptions: [(title: String, value: WarningSnooze)] = [
-        ("Snooze for 5 min", .minutes(5)),
-        ("Snooze for 15 mins", .minutes(15)),
-        ("Snooze for 30 mins", .minutes(30)),
-        ("Until battery depletes to 20%", .batteryThreshold(20)),
-        ("Until battery depletes to 10%", .batteryThreshold(10)),
-        ("Until battery depletes to 5%", .batteryThreshold(5))
-    ]
+    private let optionList = SnoozeOptionTableView()
+    private let customValueField = NSTextField()
+    private var snoozeOptions: [SnoozeOption] = []
 
-    init(onSnooze: @escaping (WarningSnooze) -> Void) {
+    init(settings: AppSettings, onSnooze: @escaping (WarningSnooze) -> Void) {
+        self.settings = settings
         self.onSnooze = onSnooze
 
         let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
@@ -582,6 +589,7 @@ final class FullScreenWarningWindowController: NSWindowController {
         window.backgroundColor = .black
         super.init(window: window)
         window.contentView = buildContentView()
+        reloadSnoozeOptions()
     }
 
     required init?(coder: NSCoder) {
@@ -605,6 +613,7 @@ final class FullScreenWarningWindowController: NSWindowController {
             window.setFrame(screenFrame, display: true)
         }
         window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(optionList)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -635,19 +644,51 @@ final class FullScreenWarningWindowController: NSWindowController {
         reasonValue.maximumNumberOfLines = 0
         reasonValue.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
 
-        snoozePopup.addItems(withTitles: snoozeOptions.map(\.title))
-        snoozePopup.selectItem(at: 0)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SnoozeOption"))
+        column.width = 520
+        optionList.addTableColumn(column)
+        optionList.headerView = nil
+        optionList.delegate = self
+        optionList.dataSource = self
+        optionList.rowHeight = 34
+        optionList.backgroundColor = .clear
+        optionList.selectionHighlightStyle = .regular
+        optionList.focusRingType = .default
+        optionList.target = self
+        optionList.doubleAction = #selector(snooze)
+        optionList.returnAction = { [weak self] in
+            self?.snooze()
+        }
+        optionList.numericEntryAction = { [weak self] digits in
+            self?.beginCustomEntry(with: digits)
+        }
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = optionList
+        scrollView.hasVerticalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.widthAnchor.constraint(equalToConstant: 540).isActive = true
+        scrollView.heightAnchor.constraint(equalToConstant: settings.showAllSnoozeOptions ? 280 : 96).isActive = true
+
+        customValueField.placeholderString = "Custom value"
+        customValueField.formatter = PositiveIntegerFormatter()
+        customValueField.delegate = self
+        customValueField.isHidden = true
+        customValueField.alignment = .center
+        customValueField.font = .systemFont(ofSize: 20, weight: .medium)
+        customValueField.widthAnchor.constraint(equalToConstant: 180).isActive = true
 
         let snoozeButton = NSButton(title: "Snooze", target: self, action: #selector(snooze))
         snoozeButton.bezelStyle = .rounded
         snoozeButton.keyEquivalent = "\r"
 
-        let controls = NSStackView(views: [snoozePopup, snoozeButton])
+        let controls = NSStackView(views: [customValueField, snoozeButton])
         controls.orientation = .horizontal
         controls.spacing = 12
         controls.alignment = .centerY
 
-        let stack = NSStackView(views: [title, body, batteryValue, reasonValue, controls])
+        let stack = NSStackView(views: [title, body, batteryValue, reasonValue, scrollView, controls])
         stack.orientation = .vertical
         stack.spacing = 24
         stack.alignment = .centerX
@@ -664,10 +705,147 @@ final class FullScreenWarningWindowController: NSWindowController {
         return content
     }
 
+    private func reloadSnoozeOptions() {
+        snoozeOptions = Self.options(for: settings)
+        optionList.reloadData()
+        if !snoozeOptions.isEmpty {
+            optionList.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
+        updateCustomFieldVisibility()
+    }
+
+    private static func options(for settings: AppSettings) -> [SnoozeOption] {
+        let defaultOption = SnoozeOption(
+            title: "Default: \(settings.defaultSnoozeTitle)",
+            value: settings.defaultSnooze,
+            isCustom: false
+        )
+
+        guard settings.showAllSnoozeOptions else {
+            return [defaultOption]
+        }
+
+        return [
+            defaultOption,
+            SnoozeOption(title: "Snooze for 5 min", value: .minutes(5), isCustom: false),
+            SnoozeOption(title: "Snooze for 15 mins", value: .minutes(15), isCustom: false),
+            SnoozeOption(title: "Snooze for 30 mins", value: .minutes(30), isCustom: false),
+            SnoozeOption(title: "Custom minutes", value: .minutes(settings.defaultSnoozeMinutes), isCustom: true),
+            SnoozeOption(title: "Until battery depletes to 20%", value: .batteryThreshold(20), isCustom: false),
+            SnoozeOption(title: "Until battery depletes to 10%", value: .batteryThreshold(10), isCustom: false),
+            SnoozeOption(title: "Until battery depletes to 5%", value: .batteryThreshold(5), isCustom: false),
+            SnoozeOption(title: "Custom battery percent", value: .batteryThreshold(settings.defaultSnoozeBatteryThreshold), isCustom: true)
+        ]
+    }
+
+    private func selectedOption() -> SnoozeOption? {
+        guard snoozeOptions.indices.contains(optionList.selectedRow) else { return nil }
+        return snoozeOptions[optionList.selectedRow]
+    }
+
+    private func updateCustomFieldVisibility() {
+        guard let selectedOption = selectedOption() else {
+            customValueField.isHidden = true
+            return
+        }
+
+        customValueField.isHidden = !selectedOption.isCustom
+        switch selectedOption.value {
+        case .minutes(let minutes):
+            customValueField.placeholderString = "Minutes"
+            customValueField.stringValue = selectedOption.isCustom ? "\(minutes)" : ""
+        case .batteryThreshold(let percent):
+            customValueField.placeholderString = "Battery %"
+            customValueField.stringValue = selectedOption.isCustom ? "\(percent)" : ""
+        }
+    }
+
+    private func beginCustomEntry(with digits: String) {
+        guard selectedOption()?.isCustom == true else { return }
+        customValueField.stringValue = digits
+        window?.makeFirstResponder(customValueField)
+    }
+
     @objc private func snooze() {
-        let selectedIndex = snoozePopup.indexOfSelectedItem
-        guard snoozeOptions.indices.contains(selectedIndex) else { return }
-        onSnooze(snoozeOptions[selectedIndex].value)
+        guard let selectedOption = selectedOption() else { return }
+        guard selectedOption.isCustom else {
+            onSnooze(selectedOption.value)
+            return
+        }
+
+        let rawValue = Int(customValueField.stringValue) ?? 0
+        switch selectedOption.value {
+        case .minutes:
+            guard rawValue > 0 else { return }
+            onSnooze(.minutes(rawValue))
+        case .batteryThreshold:
+            let percent = min(max(rawValue, 1), 100)
+            onSnooze(.batteryThreshold(percent))
+        }
+    }
+}
+
+final class SnoozeOptionTableView: NSTableView {
+    var returnAction: (() -> Void)?
+    var numericEntryAction: ((String) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 76 {
+            returnAction?()
+            return
+        }
+        if let characters = event.charactersIgnoringModifiers,
+           !characters.isEmpty,
+           characters.allSatisfy(\.isNumber) {
+            numericEntryAction?(characters)
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+extension FullScreenWarningWindowController: NSTableViewDataSource, NSTableViewDelegate {
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        snoozeOptions.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard snoozeOptions.indices.contains(row) else { return nil }
+        let field = NSTextField(labelWithString: snoozeOptions[row].title)
+        field.font = .systemFont(ofSize: 19, weight: row == 0 ? .semibold : .regular)
+        field.textColor = .white
+        return field
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateCustomFieldVisibility()
+    }
+}
+
+extension FullScreenWarningWindowController: NSTextFieldDelegate {
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard commandSelector == #selector(insertNewline(_:)) else { return false }
+        snooze()
+        return true
+    }
+}
+
+final class PositiveIntegerFormatter: Formatter {
+    override func string(for obj: Any?) -> String? {
+        if let number = obj as? NSNumber {
+            return number.stringValue
+        }
+        return obj as? String
+    }
+
+    override func getObjectValue(_ obj: AutoreleasingUnsafeMutablePointer<AnyObject?>?, for string: String, errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        let digits = string.filter(\.isNumber)
+        obj?.pointee = digits as NSString
+        return true
+    }
+
+    override func isPartialStringValid(_ partialString: String, newEditingString newString: AutoreleasingUnsafeMutablePointer<NSString?>?, errorDescription error: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        partialString.allSatisfy(\.isNumber)
     }
 }
 
@@ -683,6 +861,8 @@ final class StatusWindowController: NSWindowController {
     private let motionValue = NSTextField(labelWithString: "Checking...")
     private let inputValue = NSTextField(labelWithString: "Checking...")
     private let updateValue = NSTextField(labelWithString: "Not checked")
+    private let defaultSnoozeKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let defaultSnoozeValueField = NSTextField()
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
@@ -819,15 +999,42 @@ final class StatusWindowController: NSWindowController {
             checkbox(title: "Use idle-time fallback when motion data is unavailable", isOn: settings.idleFallbackEnabled, action: #selector(toggleIdleFallback(_:))),
             checkbox(title: "Treat external keyboard or mouse input as desk activity", isOn: settings.externalInputDeskSignalEnabled, action: #selector(toggleExternalInputDeskSignal(_:))),
             checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:))),
+            checkbox(title: "Show all available snooze periods", isOn: settings.showAllSnoozeOptions, action: #selector(toggleShowAllSnoozeOptions(_:))),
             checkbox(title: "Automatically check for app updates", isOn: settings.autoUpdateChecksEnabled, action: #selector(toggleAutoUpdateChecks(_:)))
         ]
 
+        let snoozeControls = buildDefaultSnoozeControls()
         let timing = paragraph("Current timing: \(Int(settings.motionSampleWindow))s motion sample, \(Int(settings.stationaryIdleThreshold))s idle fallback, \(Int(settings.inputActivityWindow))s input window, \(Int(settings.repeatAlertInterval))s repeat reminders, \(Int(settings.updateCheckInterval / 3600))h update checks.")
         let updateFeed = paragraph(settings.updateFeedURL == nil ? "Update feed is not configured. Add a GitHub latest-release API URL in Advanced Config when the repository has releases." : "Update feed is configured.")
         let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
         configButton.bezelStyle = .rounded
 
-        return pageStack([title, body] + controls + [timing, updateFeed, configButton])
+        return pageStack([title, body] + controls + [snoozeControls, timing, updateFeed, configButton])
+    }
+
+    private func buildDefaultSnoozeControls() -> NSView {
+        defaultSnoozeKindPopup.removeAllItems()
+        defaultSnoozeKindPopup.addItems(withTitles: ["Minutes", "Battery %"])
+        defaultSnoozeKindPopup.selectItem(at: settings.defaultSnoozeKind == .time ? 0 : 1)
+        defaultSnoozeKindPopup.target = self
+        defaultSnoozeKindPopup.action = #selector(updateDefaultSnoozeKind)
+
+        defaultSnoozeValueField.formatter = PositiveIntegerFormatter()
+        defaultSnoozeValueField.stringValue = "\(settings.defaultSnoozeValue)"
+        defaultSnoozeValueField.target = self
+        defaultSnoozeValueField.action = #selector(updateDefaultSnooze)
+        if !defaultSnoozeValueField.constraints.contains(where: { $0.firstAttribute == .width }) {
+            defaultSnoozeValueField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        }
+
+        let label = NSTextField(labelWithString: "Default snooze")
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+
+        let stack = NSStackView(views: [label, defaultSnoozeKindPopup, defaultSnoozeValueField])
+        stack.orientation = .horizontal
+        stack.spacing = 10
+        stack.alignment = .centerY
+        return stack
     }
 
     private func buildNotificationsPage() -> NSView {
@@ -962,8 +1169,32 @@ final class StatusWindowController: NSWindowController {
         settings.save()
     }
 
+    @objc private func toggleShowAllSnoozeOptions(_ sender: NSButton) {
+        settings.showAllSnoozeOptions = sender.state == .on
+        settings.save()
+    }
+
     @objc private func toggleExternalInputDeskSignal(_ sender: NSButton) {
         settings.externalInputDeskSignalEnabled = sender.state == .on
+        settings.save()
+    }
+
+    @objc private func updateDefaultSnoozeKind() {
+        settings.defaultSnoozeKind = defaultSnoozeKindPopup.indexOfSelectedItem == 0 ? .time : .battery
+        defaultSnoozeValueField.stringValue = "\(settings.defaultSnoozeValue)"
+        settings.save()
+    }
+
+    @objc private func updateDefaultSnooze() {
+        let rawValue = Int(defaultSnoozeValueField.stringValue) ?? settings.defaultSnoozeValue
+        switch settings.defaultSnoozeKind {
+        case .time:
+            settings.defaultSnoozeMinutes = max(rawValue, 1)
+            defaultSnoozeValueField.stringValue = "\(settings.defaultSnoozeMinutes)"
+        case .battery:
+            settings.defaultSnoozeBatteryThreshold = min(max(rawValue, 1), 100)
+            defaultSnoozeValueField.stringValue = "\(settings.defaultSnoozeBatteryThreshold)"
+        }
         settings.save()
     }
 
@@ -1521,6 +1752,10 @@ final class AppSettings {
     var soundEnabled: Bool
     var webhookNotificationsEnabled: Bool
     var autoUpdateChecksEnabled: Bool
+    var showAllSnoozeOptions: Bool
+    var defaultSnoozeKind: SnoozeKind
+    var defaultSnoozeMinutes: Int
+    var defaultSnoozeBatteryThreshold: Int
     var stationaryIdleThreshold: TimeInterval
     var repeatAlertInterval: TimeInterval
     var motionSampleWindow: TimeInterval
@@ -1530,6 +1765,33 @@ final class AppSettings {
     var webhookURL: URL?
     var updateFeedURL: URL?
     let configFileURL: URL
+
+    var defaultSnooze: WarningSnooze {
+        switch defaultSnoozeKind {
+        case .time:
+            return .minutes(defaultSnoozeMinutes)
+        case .battery:
+            return .batteryThreshold(defaultSnoozeBatteryThreshold)
+        }
+    }
+
+    var defaultSnoozeTitle: String {
+        switch defaultSnoozeKind {
+        case .time:
+            return "\(defaultSnoozeMinutes) min"
+        case .battery:
+            return "battery \(defaultSnoozeBatteryThreshold)%"
+        }
+    }
+
+    var defaultSnoozeValue: Int {
+        switch defaultSnoozeKind {
+        case .time:
+            return defaultSnoozeMinutes
+        case .battery:
+            return defaultSnoozeBatteryThreshold
+        }
+    }
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -1549,6 +1811,10 @@ final class AppSettings {
               "soundEnabled": true,
               "webhookNotificationsEnabled": false,
               "autoUpdateChecksEnabled": true,
+              "showAllSnoozeOptions": true,
+              "defaultSnoozeKind": "time",
+              "defaultSnoozeMinutes": 5,
+              "defaultSnoozeBatteryThreshold": 20,
               "stationaryIdleThresholdSeconds": 90,
               "motionSampleWindowSeconds": 10,
               "inputActivityWindowSeconds": 15,
@@ -1574,6 +1840,10 @@ final class AppSettings {
         soundEnabled = object["soundEnabled"] as? Bool ?? true
         webhookNotificationsEnabled = object["webhookNotificationsEnabled"] as? Bool ?? false
         autoUpdateChecksEnabled = object["autoUpdateChecksEnabled"] as? Bool ?? true
+        showAllSnoozeOptions = object["showAllSnoozeOptions"] as? Bool ?? true
+        defaultSnoozeKind = SnoozeKind(rawValue: object["defaultSnoozeKind"] as? String ?? "") ?? .time
+        defaultSnoozeMinutes = max(object["defaultSnoozeMinutes"] as? Int ?? 5, 1)
+        defaultSnoozeBatteryThreshold = min(max(object["defaultSnoozeBatteryThreshold"] as? Int ?? 20, 1), 100)
         stationaryIdleThreshold = object["stationaryIdleThresholdSeconds"] as? TimeInterval ?? 90
         motionSampleWindow = object["motionSampleWindowSeconds"] as? TimeInterval ?? 10
         inputActivityWindow = object["inputActivityWindowSeconds"] as? TimeInterval ?? 15
@@ -1605,6 +1875,10 @@ final class AppSettings {
             "soundEnabled": soundEnabled,
             "webhookNotificationsEnabled": webhookNotificationsEnabled,
             "autoUpdateChecksEnabled": autoUpdateChecksEnabled,
+            "showAllSnoozeOptions": showAllSnoozeOptions,
+            "defaultSnoozeKind": defaultSnoozeKind.rawValue,
+            "defaultSnoozeMinutes": defaultSnoozeMinutes,
+            "defaultSnoozeBatteryThreshold": defaultSnoozeBatteryThreshold,
             "stationaryIdleThresholdSeconds": stationaryIdleThreshold,
             "motionSampleWindowSeconds": motionSampleWindow,
             "inputActivityWindowSeconds": inputActivityWindow,
