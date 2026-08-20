@@ -7,7 +7,7 @@ import UserNotifications
 
 @main
 @MainActor
-final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
+final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let monitor = PowerMonitor()
     private let motionClassifier = MotionClassifier()
     private let inputMonitor = InputActivityMonitor()
@@ -15,10 +15,13 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     private lazy var notifier = AlertNotifier(settings: settings)
     private lazy var updateChecker = UpdateChecker(settings: settings)
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu!
+    private var monitoringMenuItem: NSMenuItem!
+    private var batteryStatusMenuItem: NSMenuItem!
     private var statusWindowController: StatusWindowController?
     private var reminderTimer: Timer?
     private var updateTimer: Timer?
-    private var latestState = PowerState(isOnACPower: true, sourceDescription: "Unknown")
+    private var latestState = PowerState(isOnACPower: true, sourceDescription: "Unknown", batteryPercent: nil)
     private var motionCheckID = UUID()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -49,16 +52,31 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         menuBarImage?.isTemplate = true
         statusItem.button?.image = menuBarImage
 
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "MagSafe Watch", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Show Status Window", action: #selector(showStatusWindow), keyEquivalent: "s"))
-        menu.addItem(NSMenuItem(title: "Send Test Alert", action: #selector(sendTestAlert), keyEquivalent: "t"))
-        menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdatesFromMenu), keyEquivalent: "u"))
-        menu.addItem(NSMenuItem(title: "Open Settings", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
-        statusItem.menu = menu
+        statusMenu = NSMenu()
+        statusMenu.delegate = self
+
+        let titleItem = NSMenuItem(title: "MagSafe.watch", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        statusMenu.addItem(titleItem)
+
+        monitoringMenuItem = NSMenuItem(title: "Monitoring", action: #selector(toggleMonitoringFromMenu), keyEquivalent: "")
+        statusMenu.addItem(monitoringMenuItem)
+
+        statusMenu.addItem(NSMenuItem.separator())
+        statusMenu.addItem(NSMenuItem(title: "Notifications", action: #selector(openNotifications), keyEquivalent: "n"))
+        statusMenu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
+
+        statusMenu.addItem(NSMenuItem.separator())
+        batteryStatusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        batteryStatusMenuItem.isEnabled = true
+        statusMenu.addItem(batteryStatusMenuItem)
+
+        statusItem.menu = statusMenu
+        refreshStatusMenu()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshStatusMenu()
     }
 
     private func handlePowerState(_ state: PowerState) {
@@ -85,6 +103,66 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 
     private func updateStatusIcon(for state: PowerState) {
         statusItem.button?.toolTip = "MagSafe Watch: \(state.sourceDescription)"
+        refreshStatusMenu()
+    }
+
+    private func refreshStatusMenu() {
+        guard monitoringMenuItem != nil, batteryStatusMenuItem != nil else { return }
+
+        monitoringMenuItem.state = settings.monitorEnabled ? .on : .off
+        monitoringMenuItem.title = settings.monitorEnabled ? "Monitoring On" : "Monitoring Off"
+
+        let batteryColor = Self.batteryColor(for: latestState.batteryPercent)
+        let statusPrefix = latestState.isOnACPower ? "MagSafe Connected" : "MagSafe Disconnected"
+        let batteryText: String
+        if let batteryPercent = latestState.batteryPercent {
+            batteryText = "\(batteryPercent)%"
+            batteryStatusMenuItem.image = batterySymbol(percent: batteryPercent, isCharging: latestState.isOnACPower)
+        } else {
+            batteryText = "Battery Unknown"
+            batteryStatusMenuItem.image = batterySymbol(percent: nil, isCharging: latestState.isOnACPower)
+        }
+
+        let title = NSMutableAttributedString(
+            string: "\(statusPrefix) / ",
+            attributes: [.foregroundColor: NSColor.labelColor]
+        )
+        title.append(NSAttributedString(string: batteryText, attributes: [.foregroundColor: batteryColor]))
+        batteryStatusMenuItem.attributedTitle = title
+    }
+
+    private static func batteryColor(for percent: Int?) -> NSColor {
+        guard let percent else { return .secondaryLabelColor }
+        if percent <= 10 { return .systemRed }
+        if percent <= 25 { return .systemOrange }
+        return .systemGreen
+    }
+
+    private func batterySymbol(percent: Int?, isCharging: Bool) -> NSImage? {
+        let symbolName: String
+        if isCharging {
+            symbolName = "battery.100.bolt"
+        } else if let percent {
+            switch percent {
+            case ...10:
+                symbolName = "battery.0"
+            case ...25:
+                symbolName = "battery.25"
+            case ...50:
+                symbolName = "battery.50"
+            case ...75:
+                symbolName = "battery.75"
+            default:
+                symbolName = "battery.100"
+            }
+        } else {
+            symbolName = "battery.100"
+        }
+
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [Self.batteryColor(for: percent)]))
+        image?.isTemplate = false
+        return image
     }
 
     private func classifyDisconnect(state: PowerState) {
@@ -342,6 +420,21 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
         statusWindowController?.showSettingsPage()
     }
 
+    @objc private func openNotifications() {
+        showStatusWindow()
+        statusWindowController?.showNotificationsPage()
+    }
+
+    @objc private func toggleMonitoringFromMenu() {
+        settings.monitorEnabled.toggle()
+        settings.save()
+        if !settings.monitorEnabled {
+            reminderTimer?.invalidate()
+            reminderTimer = nil
+        }
+        refreshStatusMenu()
+    }
+
     private func openConfigFile() {
         NSWorkspace.shared.open(settings.configFileURL)
     }
@@ -397,6 +490,10 @@ final class StatusWindowController: NSWindowController {
 
     func showSettingsPage() {
         selectPage(1)
+    }
+
+    func showNotificationsPage() {
+        selectPage(2)
     }
 
     func showStatusPage() {
@@ -665,6 +762,7 @@ final class StatusWindowController: NSWindowController {
 struct PowerState: Equatable {
     let isOnACPower: Bool
     let sourceDescription: String
+    let batteryPercent: Int?
 }
 
 enum MotionResult {
@@ -855,7 +953,7 @@ final class PowerMonitor {
 
     private func currentState() -> PowerState {
         guard let source = IOPSGetProvidingPowerSourceType(nil)?.takeRetainedValue() as String? else {
-            return PowerState(isOnACPower: false, sourceDescription: "Unknown")
+            return PowerState(isOnACPower: false, sourceDescription: "Unknown", batteryPercent: batteryPercent())
         }
 
         let isAC = source == kIOPSACPowerValue
@@ -871,7 +969,27 @@ final class PowerMonitor {
             description = source
         }
 
-        return PowerState(isOnACPower: isAC, sourceDescription: description)
+        return PowerState(isOnACPower: isAC, sourceDescription: description, batteryPercent: batteryPercent())
+    }
+
+    private func batteryPercent() -> Int? {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
+            return nil
+        }
+
+        for source in sources {
+            guard let details = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+                  let current = details[kIOPSCurrentCapacityKey as String] as? Int,
+                  let maximum = details[kIOPSMaxCapacityKey as String] as? Int,
+                  maximum > 0 else {
+                continue
+            }
+
+            return Int((Double(current) / Double(maximum) * 100).rounded())
+        }
+
+        return nil
     }
 }
 
