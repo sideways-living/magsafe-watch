@@ -1,13 +1,20 @@
 import AppKit
 import Foundation
 
-let outputDirectory = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? ".")
+let arguments = CommandLine.arguments.dropFirst()
+guard arguments.count >= 2 else {
+    fatalError("Usage: swift generate_icon.swift <source.svg> <output-directory>")
+}
+
+let sourceURL = URL(fileURLWithPath: String(arguments[arguments.startIndex]))
+let outputDirectory = URL(fileURLWithPath: String(arguments[arguments.index(after: arguments.startIndex)]))
 let iconsetURL = outputDirectory.appendingPathComponent("MagSafeWatch.iconset", isDirectory: true)
 let fileManager = FileManager.default
+
 try? fileManager.removeItem(at: iconsetURL)
 try fileManager.createDirectory(at: iconsetURL, withIntermediateDirectories: true)
 
-let outputs: [(String, CGFloat)] = [
+let iconOutputs: [(String, CGFloat)] = [
     ("icon_16x16.png", 16),
     ("icon_16x16@2x.png", 32),
     ("icon_32x32.png", 32),
@@ -20,125 +27,119 @@ let outputs: [(String, CGFloat)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
-for (filename, size) in outputs {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    drawIcon(size: size)
-    image.unlockFocus()
-
-    guard
-        let tiff = image.tiffRepresentation,
-        let bitmap = NSBitmapImageRep(data: tiff),
-        let png = bitmap.representation(using: .png, properties: [:])
-    else {
-        fatalError("Could not render \(filename)")
-    }
-
-    try png.write(to: iconsetURL.appendingPathComponent(filename))
+for (filename, size) in iconOutputs {
+    let pngURL = try renderSVG(sourceURL, size: Int(size), in: iconsetURL)
+    let destinationURL = iconsetURL.appendingPathComponent(filename)
+    try fileManager.moveItem(at: pngURL, to: destinationURL)
 }
 
-let process = Process()
-process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-process.arguments = [
-    "-c",
-    "icns",
-    iconsetURL.path,
-    "-o",
-    outputDirectory.appendingPathComponent("MagSafeWatch.icns").path
-]
-try process.run()
-process.waitUntilExit()
+try run(
+    executable: "/usr/bin/iconutil",
+    arguments: [
+        "-c",
+        "icns",
+        iconsetURL.path,
+        "-o",
+        outputDirectory.appendingPathComponent("MagSafeWatch.icns").path
+    ]
+)
 
-guard process.terminationStatus == 0 else {
-    fatalError("iconutil failed")
-}
-
+let menuSourceURL = try renderSVG(sourceURL, size: 128, in: outputDirectory)
+let menuIconURL = outputDirectory.appendingPathComponent("MagSafeWatchMenuBar.png")
+try createTemplateMenuIcon(from: menuSourceURL, to: menuIconURL)
+try? fileManager.removeItem(at: menuSourceURL)
 try? fileManager.removeItem(at: iconsetURL)
 
-func drawIcon(size: CGFloat) {
-    let scale = size / 1024
-    let canvas = CGRect(x: 0, y: 0, width: size, height: size)
-    NSColor.clear.setFill()
-    canvas.fill()
+func renderSVG(_ sourceURL: URL, size: Int, in outputDirectory: URL) throws -> URL {
+    try run(
+        executable: "/usr/bin/qlmanage",
+        arguments: [
+            "-t",
+            "-s",
+            String(size),
+            "-o",
+            outputDirectory.path,
+            sourceURL.path
+        ]
+    )
 
-    func r(_ value: CGFloat) -> CGFloat { value * scale }
-    func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: r(x), y: r(y))
+    let generatedURL = outputDirectory.appendingPathComponent(sourceURL.lastPathComponent + ".png")
+    guard fileManager.fileExists(atPath: generatedURL.path) else {
+        fatalError("Quick Look did not render \(sourceURL.lastPathComponent)")
     }
-    func scaledRect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> CGRect {
-        CGRect(x: r(x), y: r(y), width: r(width), height: r(height))
-    }
-
-    let background = NSBezierPath(roundedRect: scaledRect(64, 64, 896, 896), xRadius: r(210), yRadius: r(210))
-    NSColor(red: 0.05, green: 0.08, blue: 0.17, alpha: 1).setFill()
-    background.fill()
-
-    let blueOverlay = NSBezierPath(roundedRect: scaledRect(64, 64, 896, 896), xRadius: r(210), yRadius: r(210))
-    NSColor(red: 0.08, green: 0.18, blue: 0.43, alpha: 0.65).setFill()
-    blueOverlay.fill()
-
-    strokeArc(center: point(242, 314), radius: r(190), start: 24, end: 156, color: NSColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 0.44), width: r(22))
-    strokeArc(center: point(242, 360), radius: r(122), start: 28, end: 152, color: NSColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 0.78), width: r(28))
-
-    let alertRing = NSBezierPath(ovalIn: scaledRect(700, 160, 164, 164))
-    NSColor(red: 0.94, green: 0.27, blue: 0.27, alpha: 1).setStroke()
-    alertRing.lineWidth = r(34)
-    alertRing.stroke()
-    NSColor(red: 0.94, green: 0.27, blue: 0.27, alpha: 1).setFill()
-    NSBezierPath(ovalIn: scaledRect(760, 220, 44, 44)).fill()
-
-    let laptop = NSBezierPath(roundedRect: scaledRect(246, 503, 532, 215), xRadius: r(65), yRadius: r(65))
-    laptop.lineWidth = r(38)
-    NSColor(red: 0.9, green: 0.91, blue: 0.93, alpha: 1).setStroke()
-    laptop.stroke()
-
-    let base = NSBezierPath()
-    base.move(to: point(196, 718))
-    base.line(to: point(828, 718))
-    base.line(to: point(776, 796))
-    base.line(to: point(248, 796))
-    base.close()
-    NSColor(red: 0.9, green: 0.91, blue: 0.93, alpha: 1).setFill()
-    base.fill()
-
-    let bolt = NSBezierPath()
-    bolt.move(to: point(456, 284))
-    bolt.line(to: point(356, 524))
-    bolt.line(to: point(470, 524))
-    bolt.line(to: point(418, 740))
-    bolt.line(to: point(648, 428))
-    bolt.line(to: point(520, 428))
-    bolt.line(to: point(592, 284))
-    bolt.close()
-    NSColor(red: 0.98, green: 0.62, blue: 0.08, alpha: 1).setFill()
-    bolt.fill()
-
-    let connector = NSBezierPath(roundedRect: scaledRect(108, 384, 126, 104), xRadius: r(38), yRadius: r(38))
-    NSColor(red: 0.38, green: 0.65, blue: 0.98, alpha: 1).setFill()
-    connector.fill()
-
-    let cable = NSBezierPath()
-    cable.move(to: point(194, 436))
-    cable.line(to: point(304, 436))
-    cable.lineCapStyle = .round
-    cable.lineWidth = r(42)
-    NSColor(red: 0.38, green: 0.65, blue: 0.98, alpha: 1).setStroke()
-    cable.stroke()
-
-    let gap = NSBezierPath()
-    gap.move(to: point(304, 436))
-    gap.line(to: point(366, 436))
-    gap.lineCapStyle = .round
-    gap.lineWidth = r(30)
-    NSColor(red: 0.94, green: 0.27, blue: 0.27, alpha: 1).setStroke()
-    gap.stroke()
+    return generatedURL
 }
 
-func strokeArc(center: CGPoint, radius: CGFloat, start: CGFloat, end: CGFloat, color: NSColor, width: CGFloat) {
-    let path = NSBezierPath()
-    path.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: end)
-    path.lineCapStyle = .round
-    path.lineWidth = width
-    color.setStroke()
-    path.stroke()
+func createTemplateMenuIcon(from sourceURL: URL, to outputURL: URL) throws {
+    guard
+        let sourceImage = NSImage(contentsOf: sourceURL),
+        let resized = sourceImage.resized(to: NSSize(width: 44, height: 44)),
+        let tiff = resized.tiffRepresentation,
+        let bitmap = NSBitmapImageRep(data: tiff)
+    else {
+        fatalError("Could not read rendered menu icon")
+    }
+
+    guard let output = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: bitmap.pixelsWide,
+        pixelsHigh: bitmap.pixelsHigh,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        fatalError("Could not create menu icon bitmap")
+    }
+
+    for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide {
+            let color = bitmap.colorAt(x: x, y: y) ?? .white
+            let brightness = (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            let alpha: CGFloat
+
+            if brightness > 0.93 {
+                alpha = 0
+            } else if brightness < 0.18 {
+                alpha = 1
+            } else {
+                alpha = min(1, max(0, (0.93 - brightness) / 0.75))
+            }
+
+            output.setColor(NSColor(deviceWhite: 0, alpha: alpha), atX: x, y: y)
+        }
+    }
+
+    guard let png = output.representation(using: .png, properties: [:]) else {
+        fatalError("Could not encode menu icon PNG")
+    }
+    try png.write(to: outputURL)
+}
+
+func run(executable: String, arguments: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+
+    guard process.terminationStatus == 0 else {
+        fatalError("\(executable) failed with exit code \(process.terminationStatus)")
+    }
+}
+
+extension NSImage {
+    func resized(to size: NSSize) -> NSImage? {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
+        image.unlockFocus()
+        return image
+    }
 }

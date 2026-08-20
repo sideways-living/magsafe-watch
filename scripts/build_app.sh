@@ -15,7 +15,7 @@ swift build -c release --package-path "$ROOT_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"
-swift "$ROOT_DIR/scripts/generate_icon.swift" "$RESOURCES_DIR"
+swift "$ROOT_DIR/scripts/generate_icon.swift" "$ROOT_DIR/Assets/MagSafeWatchLogo.svg" "$RESOURCES_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

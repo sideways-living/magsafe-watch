@@ -45,7 +45,9 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
+        let menuBarImage = NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
+        menuBarImage?.isTemplate = true
+        statusItem.button?.image = menuBarImage
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "MagSafe Watch", action: nil, keyEquivalent: ""))
@@ -82,8 +84,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusIcon(for state: PowerState) {
-        let name = state.isOnACPower ? "bolt.circle" : "battery.50percent"
-        statusItem.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: state.sourceDescription)
+        statusItem.button?.toolTip = "MagSafe Watch: \(state.sourceDescription)"
     }
 
     private func classifyDisconnect(state: PowerState) {

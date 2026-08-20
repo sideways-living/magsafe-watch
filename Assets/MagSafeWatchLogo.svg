@@ -1,26 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-  <title id="title">MagSafe Watch logo</title>
-  <desc id="desc">A MacBook outline with a detached MagSafe connector, lightning bolt, and alert pulse.</desc>
-  <defs>
-    <linearGradient id="background" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0f172a"/>
-      <stop offset="0.52" stop-color="#172554"/>
-      <stop offset="1" stop-color="#111827"/>
-    </linearGradient>
-    <linearGradient id="power" x1="356" y1="278" x2="690" y2="718" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#fbbf24"/>
-      <stop offset="1" stop-color="#f97316"/>
-    </linearGradient>
-  </defs>
-  <rect x="64" y="64" width="896" height="896" rx="210" fill="url(#background)"/>
-  <circle cx="782" cy="242" r="82" fill="none" stroke="#ef4444" stroke-width="34"/>
-  <circle cx="782" cy="242" r="22" fill="#ef4444"/>
-  <path d="M246 568c0-36 29-65 65-65h402c36 0 65 29 65 65v150H246V568Z" fill="none" stroke="#e5e7eb" stroke-width="38" stroke-linejoin="round"/>
-  <path d="M196 718h632l-52 78H248l-52-78Z" fill="#e5e7eb"/>
-  <path d="M456 284 356 524h114l-52 216 230-312H520l72-144H456Z" fill="url(#power)"/>
-  <path d="M194 436h110" stroke="#60a5fa" stroke-width="42" stroke-linecap="round"/>
-  <rect x="108" y="384" width="126" height="104" rx="38" fill="#60a5fa"/>
-  <path d="M304 436h62" stroke="#ef4444" stroke-width="30" stroke-linecap="round" stroke-dasharray="2 58"/>
-  <path d="M122 314c72-72 196-72 268 0" fill="none" stroke="#38bdf8" stroke-width="28" stroke-linecap="round" opacity="0.78"/>
-  <path d="M86 260c112-112 300-112 412 0" fill="none" stroke="#38bdf8" stroke-width="22" stroke-linecap="round" opacity="0.44"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="508" height="508" viewBox="0 0 508 508" role="img" aria-label="MacBook line icon">
+  <rect width="508" height="508" fill="#ffffff"/>
+  <svg x="167.33" y="176.17" width="173.33" height="134.67" viewBox="0 0 660 512" aria-label="MagSafe charger icon">
+    <g fill="none" stroke="#080808" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M168 32H480C500 32 516 48 516 68V346C516 366 500 382 480 382H168C148 382 132 366 132 346V68C132 48 148 32 168 32Z"/>
+      <path d="M231 33V154C231 164 223 172 213 172H132"/>
+      <path d="M132 101H153V156H132Z"/>
+      <path d="M132 116H45C39 116 34 121 34 127V139C34 145 39 150 45 150H132"/>
+      <circle cx="58" cy="133" r="4" fill="#080808" stroke="none"/>
+      <path d="M516 200H590C609 200 625 216 625 235V435C625 461 604 482 578 482H89C63 482 42 461 42 435V340"/>
+      <path d="M516 229H590C598 229 604 235 604 243V435C604 449 592 461 578 461H89C75 461 63 449 63 435V340"/>
+      <path d="M31 190H74C80 190 85 195 85 201V316C85 322 80 327 74 327H31C25 327 20 322 20 316V201C20 195 25 190 31 190Z"/>
+      <path d="M20 204H7V260H20"/>
+      <path d="M42 327V340H63V327"/>
+    </g>
+  </svg>
+  <g transform="translate(-116 -116.5)" fill="none" stroke="#0b0b0b" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M204 249H536C540 249 543 252 543 256V471H197V256C197 252 200 249 204 249Z" stroke-width="4"/>
+    <path d="M168 482L197 473M572 482L543 473" stroke-width="1"/>
+    <path d="M168 482H572V488C572 490 570 492 568 492H172C170 492 168 490 168 488V482Z" fill="#0b0b0b" stroke-width="3"/>
+    <path d="M197 469H543" stroke-width="8"/>
+    <path d="M353 250H387V256H353Z" fill="#0b0b0b" stroke-width="2"/>
+  </g>
 </svg>
