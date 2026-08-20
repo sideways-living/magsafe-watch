@@ -13,6 +13,12 @@ export SWIFTPM_HOME="$ROOT_DIR/.build/swiftpm-home"
 swift build -c release --package-path "$ROOT_DIR"
 
 pkill -f "$APP_DIR/Contents/MacOS/MagSafe Watch" >/dev/null 2>&1 || true
+for _ in {1..20}; do
+  if ! pgrep -f "$APP_DIR/Contents/MacOS/MagSafe Watch" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"

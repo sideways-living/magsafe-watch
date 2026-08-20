@@ -7,6 +7,17 @@ import UserNotifications
 
 @main
 @MainActor
+struct MagSafeWatchMain {
+    private static let delegate = MagSafeWatchApp()
+
+    static func main() {
+        let app = NSApplication.shared
+        app.delegate = delegate
+        app.run()
+    }
+}
+
+@MainActor
 final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let monitor = PowerMonitor()
     private let motionClassifier = MotionClassifier()
@@ -32,6 +43,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        configureMainMenu()
         configureStatusItem()
         showStatusWindow()
         notifier.requestAuthorization()
@@ -52,11 +64,45 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateTimer?.invalidate()
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showStatusWindow()
+        }
+        return true
+    }
+
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "MagSafe Watch")
+        appMenu.addItem(NSMenuItem(title: "About MagSafe Watch", action: #selector(showStatusWindow), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: ","))
+        appMenu.addItem(NSMenuItem(title: "Notifications", action: #selector(openNotifications), keyEquivalent: "n"))
+        appMenu.addItem(NSMenuItem(title: "Permissions", action: #selector(openPermissions), keyEquivalent: "p"))
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(NSMenuItem(title: "Quit MagSafe Watch", action: #selector(quit), keyEquivalent: "q"))
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(NSMenuItem(title: "Show MagSafe Watch", action: #selector(showStatusWindow), keyEquivalent: "0"))
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
     private func configureStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menuBarImage = NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
         menuBarImage?.isTemplate = true
         statusItem.button?.image = menuBarImage
+        statusItem.button?.title = " Watch"
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.setAccessibilityLabel("MagSafe Watch")
 
         statusMenu = NSMenu()
         statusMenu.delegate = self
@@ -523,6 +569,11 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusWindowController?.showNotificationsPage()
     }
 
+    @objc private func openPermissions() {
+        showStatusWindow()
+        statusWindowController?.showPermissionsPage()
+    }
+
     @objc private func toggleMonitoringFromMenu() {
         settings.monitorEnabled.toggle()
         settings.save()
@@ -906,6 +957,10 @@ final class StatusWindowController: NSWindowController {
 
     func showNotificationsPage() {
         selectPage(2)
+    }
+
+    func showPermissionsPage() {
+        selectPage(3)
     }
 
     func showStatusPage() {
