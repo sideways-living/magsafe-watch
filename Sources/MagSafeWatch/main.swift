@@ -427,6 +427,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusWindowController = StatusWindowController(
                 settings: settings,
                 testAlertHandler: { [weak self] in self?.sendTestAlert() },
+                notificationPermissionHandler: { [weak self] in self?.notifier.requestAuthorization() },
                 checkForUpdatesHandler: { [weak self] in self?.checkForUpdates(manual: true) },
                 updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
                 monitorChangedHandler: { [weak self] in self?.handleMonitoringSettingChanged() },
@@ -852,6 +853,7 @@ final class PositiveIntegerFormatter: Formatter {
 final class StatusWindowController: NSWindowController {
     private let settings: AppSettings
     private let testAlertHandler: () -> Void
+    private let notificationPermissionHandler: () -> Void
     private let checkForUpdatesHandler: () -> Void
     private let updateScheduleChangedHandler: () -> Void
     private let monitorChangedHandler: () -> Void
@@ -863,12 +865,13 @@ final class StatusWindowController: NSWindowController {
     private let updateValue = NSTextField(labelWithString: "Not checked")
     private let defaultSnoozeKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let defaultSnoozeValueField = NSTextField()
-    private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Status"], trackingMode: .selectOne, target: nil, action: nil)
+    private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Permissions", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
+        self.notificationPermissionHandler = notificationPermissionHandler
         self.checkForUpdatesHandler = checkForUpdatesHandler
         self.updateScheduleChangedHandler = updateScheduleChangedHandler
         self.monitorChangedHandler = monitorChangedHandler
@@ -906,7 +909,7 @@ final class StatusWindowController: NSWindowController {
     }
 
     func showStatusPage() {
-        selectPage(3)
+        selectPage(4)
     }
 
     func updateUpdateStatus(_ status: String) {
@@ -958,6 +961,8 @@ final class StatusWindowController: NSWindowController {
         case 2:
             page = buildNotificationsPage()
         case 3:
+            page = buildPermissionsPage()
+        case 4:
             page = buildStatusPage()
         default:
             page = buildIntroPage()
@@ -1056,6 +1061,48 @@ final class StatusWindowController: NSWindowController {
         return pageStack([title, body] + controls + [webhook, row([testButton, configButton])])
     }
 
+    private func buildPermissionsPage() -> NSView {
+        let title = heading("Permissions")
+        let body = paragraph("Use these steps after installing the app. macOS requires you to approve notifications before banners and sounds can appear. Input Monitoring may be needed for the external keyboard and mouse desk-activity signal.")
+
+        let notificationStep = numberedStep(
+            "1. Allow notifications",
+            "Click Request Notification Permission, then allow MagSafe Watch when macOS prompts. If you miss the prompt, open Notification Settings and enable alerts for MagSafe Watch."
+        )
+        let notificationRequest = NSButton(title: "Request Notification Permission", target: self, action: #selector(requestNotificationPermission))
+        notificationRequest.bezelStyle = .rounded
+        let notificationSettings = NSButton(title: "Open Notification Settings", target: self, action: #selector(openNotificationSettings))
+        notificationSettings.bezelStyle = .rounded
+
+        let inputStep = numberedStep(
+            "2. Allow Input Monitoring if prompted",
+            "Open Input Monitoring and enable MagSafe Watch if macOS lists it there. This helps the app tell external keyboard or mouse activity apart from built-in laptop input."
+        )
+        let inputSettings = NSButton(title: "Open Input Monitoring", target: self, action: #selector(openInputMonitoringSettings))
+        inputSettings.bezelStyle = .rounded
+
+        let loginStep = numberedStep(
+            "3. Optional launch at login",
+            "Open Login Items if you want MagSafe Watch to start automatically when you sign in."
+        )
+        let loginSettings = NSButton(title: "Open Login Items", target: self, action: #selector(openLoginItemsSettings))
+        loginSettings.bezelStyle = .rounded
+
+        let privacySettings = NSButton(title: "Open Privacy & Security", target: self, action: #selector(openPrivacySettings))
+        privacySettings.bezelStyle = .rounded
+
+        return pageStack([
+            title,
+            body,
+            notificationStep,
+            row([notificationRequest, notificationSettings]),
+            inputStep,
+            row([inputSettings, privacySettings]),
+            loginStep,
+            loginSettings
+        ])
+    }
+
     private func buildStatusPage() -> NSView {
         let title = heading("Status")
         let description = paragraph("You can close this window and the charger monitor will keep running from the menu bar.")
@@ -1122,6 +1169,16 @@ final class StatusWindowController: NSWindowController {
         return field
     }
 
+    private func numberedStep(_ title: String, _ detail: String) -> NSView {
+        let titleField = label(title)
+        let detailField = paragraph(detail)
+        let stack = NSStackView(views: [titleField, detailField])
+        stack.orientation = .vertical
+        stack.spacing = 5
+        stack.alignment = .leading
+        return stack
+    }
+
     private func checkbox(title: String, isOn: Bool, action: Selector) -> NSButton {
         let button = NSButton(checkboxWithTitle: title, target: self, action: action)
         button.state = isOn ? .on : .off
@@ -1146,6 +1203,49 @@ final class StatusWindowController: NSWindowController {
 
     @objc private func checkForUpdates() {
         checkForUpdatesHandler()
+    }
+
+    @objc private func requestNotificationPermission() {
+        notificationPermissionHandler()
+        openNotificationSettings()
+    }
+
+    @objc private func openNotificationSettings() {
+        openSystemSettings([
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+            "x-apple.systempreferences:com.apple.preference.notifications"
+        ])
+    }
+
+    @objc private func openInputMonitoringSettings() {
+        openSystemSettings([
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy"
+        ])
+    }
+
+    @objc private func openLoginItemsSettings() {
+        openSystemSettings([
+            "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+            "x-apple.systempreferences:com.apple.preference.users?LoginItems"
+        ])
+    }
+
+    @objc private func openPrivacySettings() {
+        openSystemSettings([
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy"
+        ])
+    }
+
+    private func openSystemSettings(_ rawURLs: [String]) {
+        for rawURL in rawURLs {
+            guard let url = URL(string: rawURL) else { continue }
+            if NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     @objc private func toggleMonitor(_ sender: NSButton) {

@@ -35,6 +35,18 @@ The app bundle is written to:
 outputs/MagSafe Watch.app
 ```
 
+To build a local macOS installer package:
+
+```bash
+./scripts/build_installer.sh
+```
+
+The installer is written to:
+
+```text
+outputs/MagSafe Watch Installer.pkg
+```
+
 ## Run
 
 Open the app bundle. An introduction window appears, and macOS will ask for
@@ -45,16 +57,29 @@ The window has separate pages:
 - Intro: explains what the app does and how it decides whether an unplug looks accidental
 - Settings: switches for monitoring, motion detection, idle fallback, external input detection, and repeat reminders
 - Notifications: switches for macOS banners, alert sound, and webhook push alerts
+- Permissions: guided buttons that request notification permission and open the relevant macOS System Settings panes
 - Status: current power source, idle time, latest motion result, input source, and update status
 
 You can close the window after launch. The menu-bar bolt icon keeps running and
 has:
 
-- Show Status Window
-- Send Test Alert
-- Check for Updates
-- Open Settings
-- Quit
+- MagSafe.watch
+- Monitoring On/Off
+- Notifications
+- Settings
+- Current MagSafe and battery status
+
+## Permissions
+
+MagSafe Watch needs notification permission before it can show macOS banners.
+Input Monitoring may also be needed if you enable external keyboard/mouse
+activity as a desk-use signal. The app's Permissions tab includes buttons to:
+
+- request notification permission
+- open Notification Settings
+- open Input Monitoring
+- open Privacy & Security
+- open Login Items for optional launch-at-login setup
 
 To start it automatically at login:
 
