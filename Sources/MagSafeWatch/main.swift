@@ -42,9 +42,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var motionCheckID = UUID()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
         configureMainMenu()
-        configureStatusItem()
+        applyPresentationSettings()
         showStatusWindow()
         notifier.requestAuthorization()
 
@@ -96,11 +95,16 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func configureStatusItem() {
+        guard statusItem == nil else {
+            refreshStatusMenu()
+            return
+        }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menuBarImage = NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
         menuBarImage?.isTemplate = true
         statusItem.button?.image = menuBarImage
-        statusItem.button?.title = " Watch"
+        statusItem.button?.title = " MagSafe"
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.setAccessibilityLabel("MagSafe Watch")
 
@@ -125,6 +129,31 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem.menu = statusMenu
         refreshStatusMenu()
+    }
+
+    private func removeStatusItem() {
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+        statusItem = nil
+        statusMenu = nil
+        monitoringMenuItem = nil
+        batteryStatusMenuItem = nil
+    }
+
+    private func applyPresentationSettings() {
+        if !settings.showMenuBarItem && !settings.showDockIcon {
+            settings.showDockIcon = true
+            settings.save()
+        }
+
+        NSApp.setActivationPolicy(settings.showDockIcon ? .regular : .accessory)
+
+        if settings.showMenuBarItem {
+            configureStatusItem()
+        } else {
+            removeStatusItem()
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -157,12 +186,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusIcon(for state: PowerState) {
-        statusItem.button?.toolTip = "MagSafe Watch: \(state.sourceDescription)"
+        statusItem?.button?.toolTip = "MagSafe Watch: \(state.sourceDescription)"
         refreshStatusMenu()
     }
 
     private func refreshStatusMenu() {
-        guard monitoringMenuItem != nil, batteryStatusMenuItem != nil else { return }
+        guard let monitoringMenuItem, let batteryStatusMenuItem else { return }
 
         monitoringMenuItem.state = settings.monitorEnabled ? .on : .off
         monitoringMenuItem.title = settings.monitorEnabled ? "Monitoring On" : "Monitoring Off"
@@ -477,6 +506,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 checkForUpdatesHandler: { [weak self] in self?.checkForUpdates(manual: true) },
                 updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
                 monitorChangedHandler: { [weak self] in self?.handleMonitoringSettingChanged() },
+                presentationChangedHandler: { [weak self] in self?.applyPresentationSettings() },
                 openConfigHandler: { [weak self] in self?.openConfigFile() }
             )
         }
@@ -908,6 +938,7 @@ final class StatusWindowController: NSWindowController {
     private let checkForUpdatesHandler: () -> Void
     private let updateScheduleChangedHandler: () -> Void
     private let monitorChangedHandler: () -> Void
+    private let presentationChangedHandler: () -> Void
     private let openConfigHandler: () -> Void
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
@@ -919,13 +950,14 @@ final class StatusWindowController: NSWindowController {
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Permissions", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, presentationChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
         self.notificationPermissionHandler = notificationPermissionHandler
         self.checkForUpdatesHandler = checkForUpdatesHandler
         self.updateScheduleChangedHandler = updateScheduleChangedHandler
         self.monitorChangedHandler = monitorChangedHandler
+        self.presentationChangedHandler = presentationChangedHandler
         self.openConfigHandler = openConfigHandler
 
         let window = NSWindow(
@@ -1054,6 +1086,8 @@ final class StatusWindowController: NSWindowController {
         let body = paragraph("Control how MagSafe Watch decides whether a power disconnection looks accidental.")
 
         let controls: [NSView] = [
+            checkbox(title: "Show MagSafe Watch in the menu bar", isOn: settings.showMenuBarItem, action: #selector(toggleShowMenuBarItem(_:))),
+            checkbox(title: "Show MagSafe Watch in the Dock", isOn: settings.showDockIcon, action: #selector(toggleShowDockIcon(_:))),
             checkbox(title: "Monitor MagSafe and power adapter changes", isOn: settings.monitorEnabled, action: #selector(toggleMonitor(_:))),
             checkbox(title: "Use motion detection when sensor events are available", isOn: settings.motionDetectionEnabled, action: #selector(toggleMotionDetection(_:))),
             checkbox(title: "Use idle-time fallback when motion data is unavailable", isOn: settings.idleFallbackEnabled, action: #selector(toggleIdleFallback(_:))),
@@ -1307,6 +1341,26 @@ final class StatusWindowController: NSWindowController {
         settings.monitorEnabled = sender.state == .on
         settings.save()
         monitorChangedHandler()
+    }
+
+    @objc private func toggleShowMenuBarItem(_ sender: NSButton) {
+        settings.showMenuBarItem = sender.state == .on
+        if !settings.showMenuBarItem && !settings.showDockIcon {
+            settings.showDockIcon = true
+        }
+        settings.save()
+        presentationChangedHandler()
+        selectPage(1)
+    }
+
+    @objc private func toggleShowDockIcon(_ sender: NSButton) {
+        settings.showDockIcon = sender.state == .on
+        if !settings.showDockIcon && !settings.showMenuBarItem {
+            settings.showMenuBarItem = true
+        }
+        settings.save()
+        presentationChangedHandler()
+        selectPage(1)
     }
 
     @objc private func toggleMotionDetection(_ sender: NSButton) {
@@ -1898,6 +1952,8 @@ final class AlertNotifier {
 }
 
 final class AppSettings {
+    var showMenuBarItem: Bool
+    var showDockIcon: Bool
     var monitorEnabled: Bool
     var motionDetectionEnabled: Bool
     var idleFallbackEnabled: Bool
@@ -1957,6 +2013,8 @@ final class AppSettings {
         if !FileManager.default.fileExists(atPath: configFileURL.path) {
             let defaults = """
             {
+              "showMenuBarItem": true,
+              "showDockIcon": true,
               "monitorEnabled": true,
               "motionDetectionEnabled": true,
               "idleFallbackEnabled": true,
@@ -1986,6 +2044,11 @@ final class AppSettings {
         let data = (try? Data(contentsOf: configFileURL)) ?? Data()
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 
+        showMenuBarItem = object["showMenuBarItem"] as? Bool ?? true
+        showDockIcon = object["showDockIcon"] as? Bool ?? true
+        if !showMenuBarItem && !showDockIcon {
+            showDockIcon = true
+        }
         monitorEnabled = object["monitorEnabled"] as? Bool ?? true
         motionDetectionEnabled = object["motionDetectionEnabled"] as? Bool ?? true
         idleFallbackEnabled = object["idleFallbackEnabled"] as? Bool ?? true
@@ -2021,6 +2084,8 @@ final class AppSettings {
 
     func save() {
         let object: [String: Any] = [
+            "showMenuBarItem": showMenuBarItem,
+            "showDockIcon": showDockIcon,
             "monitorEnabled": monitorEnabled,
             "motionDetectionEnabled": motionDetectionEnabled,
             "idleFallbackEnabled": idleFallbackEnabled,

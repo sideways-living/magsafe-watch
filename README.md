@@ -69,6 +69,14 @@ has:
 - Settings
 - Current MagSafe and battery status
 
+Presentation settings:
+
+- Show MagSafe Watch in the menu bar: enables the menu-bar item for menu-bar app use
+- Show MagSafe Watch in the Dock: controls whether the app also appears as a normal Dock app
+
+At least one of these remains enabled so the app is not left running with no
+visible way to reopen it.
+
 ## Permissions
 
 MagSafe Watch needs notification permission before it can show macOS banners.
