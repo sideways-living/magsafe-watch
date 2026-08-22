@@ -678,7 +678,7 @@ final class FullScreenWarningWindowController: NSWindowController {
             batteryValue.stringValue = "Battery unknown"
             batteryValue.textColor = .secondaryLabelColor
         }
-        reasonValue.stringValue = reason
+        reasonValue.stringValue = conciseReason(from: reason)
     }
 
     func showWarning() {
@@ -693,35 +693,40 @@ final class FullScreenWarningWindowController: NSWindowController {
     private func buildContentView() -> NSView {
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.cgColor
+        content.layer?.backgroundColor = NSColor(calibratedRed: 0.04, green: 0.045, blue: 0.055, alpha: 1).cgColor
 
-        let title = NSTextField(labelWithString: "MagSafe cable disconnected")
-        title.font = .systemFont(ofSize: 54, weight: .bold)
+        let title = NSTextField(labelWithString: "Plug MagSafe back in")
+        title.font = .systemFont(ofSize: 58, weight: .bold)
         title.textColor = .white
         title.alignment = .center
         title.lineBreakMode = .byWordWrapping
         title.maximumNumberOfLines = 2
 
-        let body = NSTextField(wrappingLabelWithString: "Your MacBook is running on battery while it appears to be sitting still. Reconnect MagSafe or snooze this warning.")
-        body.font = .systemFont(ofSize: 24, weight: .regular)
-        body.textColor = .white
+        let body = NSTextField(wrappingLabelWithString: "Power is disconnected and this Mac appears to be sitting at your desk.")
+        body.font = .systemFont(ofSize: 24, weight: .medium)
+        body.textColor = NSColor(white: 0.86, alpha: 1)
         body.alignment = .center
-        body.maximumNumberOfLines = 0
+        body.maximumNumberOfLines = 2
+        body.widthAnchor.constraint(lessThanOrEqualToConstant: 760).isActive = true
 
         batteryValue.font = .systemFont(ofSize: 28, weight: .semibold)
         batteryValue.alignment = .center
 
-        reasonValue.font = .systemFont(ofSize: 15, weight: .regular)
-        reasonValue.textColor = .secondaryLabelColor
+        reasonValue.font = .systemFont(ofSize: 14, weight: .regular)
+        reasonValue.textColor = NSColor(white: 0.56, alpha: 1)
         reasonValue.alignment = .center
-        reasonValue.maximumNumberOfLines = 0
-        reasonValue.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
+        reasonValue.maximumNumberOfLines = 1
 
         let snoozeControls = buildSnoozeControls()
 
-        let stack = NSStackView(views: [title, body, batteryValue, reasonValue, snoozeControls])
+        let primaryStack = NSStackView(views: [title, body, batteryValue, reasonValue])
+        primaryStack.orientation = .vertical
+        primaryStack.spacing = 18
+        primaryStack.alignment = .centerX
+
+        let stack = NSStackView(views: [primaryStack, snoozeControls])
         stack.orientation = .vertical
-        stack.spacing = 24
+        stack.spacing = 44
         stack.alignment = .centerX
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -737,21 +742,34 @@ final class FullScreenWarningWindowController: NSWindowController {
     }
 
     private func buildSnoozeControls() -> NSView {
+        let title = NSTextField(labelWithString: "Snooze")
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.textColor = NSColor(white: 0.70, alpha: 1)
+        title.alignment = .center
+
         if !settings.showAllSnoozeOptions {
-            return row([snoozeButton(title: "Default: \(settings.defaultSnoozeTitle)", value: settings.defaultSnooze)])
+            let stack = NSStackView(views: [title, row([snoozeButton(title: "Default: \(settings.defaultSnoozeTitle)", value: settings.defaultSnooze)])])
+            stack.orientation = .vertical
+            stack.spacing = 12
+            stack.alignment = .centerX
+            return stack
         }
 
         configureCustomField(customMinutesField, placeholder: "Minutes", value: settings.defaultSnoozeMinutes)
         configureCustomField(customBatteryField, placeholder: "Battery %", value: settings.defaultSnoozeBatteryThreshold)
 
+        let timeLabel = rowLabel("Time")
         let timeRow = row([
+            timeLabel,
             snoozeButton(title: "5 min", value: .minutes(5)),
             snoozeButton(title: "15 mins", value: .minutes(15)),
             snoozeButton(title: "30 mins", value: .minutes(30)),
             customMinutesField,
             actionButton(title: "Custom min", action: #selector(customMinutesSnooze))
         ])
+        let batteryLabel = rowLabel("Battery")
         let batteryRow = row([
+            batteryLabel,
             snoozeButton(title: "20%", value: .batteryThreshold(20)),
             snoozeButton(title: "10%", value: .batteryThreshold(10)),
             snoozeButton(title: "5%", value: .batteryThreshold(5)),
@@ -759,7 +777,7 @@ final class FullScreenWarningWindowController: NSWindowController {
             actionButton(title: "Custom %", action: #selector(customBatterySnooze))
         ])
 
-        let stack = NSStackView(views: [timeRow, batteryRow])
+        let stack = NSStackView(views: [title, timeRow, batteryRow])
         stack.orientation = .vertical
         stack.spacing = 12
         stack.alignment = .centerX
@@ -774,9 +792,19 @@ final class FullScreenWarningWindowController: NSWindowController {
         return stack
     }
 
+    private func rowLabel(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: 13, weight: .medium)
+        field.textColor = NSColor(white: 0.62, alpha: 1)
+        field.alignment = .right
+        field.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        return field
+    }
+
     private func snoozeButton(title: String, value: WarningSnooze) -> NSButton {
         let button = SnoozeChoiceButton(title: title, target: self, action: #selector(staticSnooze(_:)))
         button.bezelStyle = .rounded
+        button.controlSize = .large
         button.snooze = value
         button.widthAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
         return button
@@ -785,6 +813,7 @@ final class FullScreenWarningWindowController: NSWindowController {
     private func actionButton(title: String, action: Selector) -> NSButton {
         let button = SnoozeChoiceButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
+        button.controlSize = .large
         button.widthAnchor.constraint(greaterThanOrEqualToConstant: 116).isActive = true
         return button
     }
@@ -796,9 +825,24 @@ final class FullScreenWarningWindowController: NSWindowController {
         field.delegate = self
         field.alignment = .center
         field.font = .systemFont(ofSize: 17, weight: .medium)
+        field.controlSize = .large
         if !field.constraints.contains(where: { $0.firstAttribute == .width }) {
             field.widthAnchor.constraint(equalToConstant: 110).isActive = true
         }
+    }
+
+    private func conciseReason(from reason: String) -> String {
+        if reason.localizedCaseInsensitiveContains("external keyboard") ||
+            reason.localizedCaseInsensitiveContains("external mouse") {
+            return "External input suggests this Mac is still at the desk."
+        }
+        if reason.localizedCaseInsensitiveContains("idle fallback") {
+            return "No recent movement or activity was detected."
+        }
+        if reason.localizedCaseInsensitiveContains("motion sensor") {
+            return "Motion data was unavailable, so idle checks were used."
+        }
+        return "No movement was detected after power disconnected."
     }
 
     @objc private func staticSnooze(_ sender: NSButton) {
