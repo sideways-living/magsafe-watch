@@ -60,7 +60,7 @@ xattr -c "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1 || true
 codesign --force --deep --sign - "$APP_DIR" >/dev/null
-xattr -c "$APP_DIR" >/dev/null 2>&1 || true
+xattr -cr "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1 || true
 

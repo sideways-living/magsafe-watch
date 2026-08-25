@@ -646,6 +646,20 @@ final class FullScreenWarningWindowController: NSWindowController {
     private let reasonValue = NSTextField(wrappingLabelWithString: "")
     private let customMinutesField = NSTextField()
     private let customBatteryField = NSTextField()
+    private let customClockView = ClockFaceView(minutes: nil)
+    private let customBatteryView = BatteryBarsView(filledBars: 0)
+    private var selectedSnooze: WarningSnooze?
+    private weak var selectedSnoozeCard: SnoozeOptionCard?
+    private weak var customMinutesCard: SnoozeOptionCard?
+    private weak var customBatterySnoozeCard: SnoozeOptionCard?
+    private lazy var confirmButton: NSButton = {
+        let button = NSButton(title: "Confirm Snooze", target: self, action: #selector(confirmSelectedSnooze))
+        button.bezelStyle = .rounded
+        button.controlSize = .large
+        button.font = .systemFont(ofSize: 17, weight: .semibold)
+        button.isEnabled = false
+        return button
+    }()
 
     init(settings: AppSettings, onSnooze: @escaping (WarningSnooze) -> Void) {
         self.settings = settings
@@ -694,17 +708,19 @@ final class FullScreenWarningWindowController: NSWindowController {
     private func buildContentView() -> NSView {
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.48).cgColor
+        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
 
-        let panel = NSView()
+        let panel = NSVisualEffectView()
+        panel.material = .hudWindow
+        panel.blendingMode = .withinWindow
+        panel.state = .active
         panel.wantsLayer = true
-        panel.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        panel.layer?.cornerRadius = 18
+        panel.layer?.cornerRadius = 30
         panel.layer?.masksToBounds = true
         panel.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: "Plug MagSafe back in")
-        title.font = .systemFont(ofSize: 46, weight: .bold)
+        title.font = .systemFont(ofSize: 44, weight: .bold)
         title.textColor = .labelColor
         title.alignment = .center
         title.lineBreakMode = .byWordWrapping
@@ -734,7 +750,7 @@ final class FullScreenWarningWindowController: NSWindowController {
 
         let stack = NSStackView(views: [primaryStack, snoozeControls])
         stack.orientation = .vertical
-        stack.spacing = 36
+        stack.spacing = 30
         stack.alignment = .centerX
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -745,29 +761,25 @@ final class FullScreenWarningWindowController: NSWindowController {
             panel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             panel.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.66),
             panel.heightAnchor.constraint(lessThanOrEqualTo: content.heightAnchor, multiplier: 0.66),
-            panel.widthAnchor.constraint(greaterThanOrEqualToConstant: 780),
+            panel.widthAnchor.constraint(greaterThanOrEqualToConstant: 900),
 
             stack.centerXAnchor.constraint(equalTo: panel.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: panel.centerYAnchor),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: panel.leadingAnchor, constant: 48),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: panel.trailingAnchor, constant: -48),
-            stack.topAnchor.constraint(greaterThanOrEqualTo: panel.topAnchor, constant: 42),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: panel.bottomAnchor, constant: -42)
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: panel.leadingAnchor, constant: 42),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: panel.trailingAnchor, constant: -42),
+            stack.topAnchor.constraint(greaterThanOrEqualTo: panel.topAnchor, constant: 36),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: panel.bottomAnchor, constant: -36)
         ])
 
         return content
     }
 
     private func buildSnoozeControls() -> NSView {
-        let title = NSTextField(labelWithString: "Snooze")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
-        title.textColor = .secondaryLabelColor
-        title.alignment = .center
-
         if !settings.showAllSnoozeOptions {
-            let stack = NSStackView(views: [title, row([snoozeButton(title: settings.defaultSnoozeTitle, value: settings.defaultSnooze, symbolName: symbolName(for: settings.defaultSnooze))])])
+            let defaultCard = optionCard(for: settings.defaultSnooze, title: settings.defaultSnoozeTitle)
+            let stack = NSStackView(views: [rowLabel("Snooze"), row([defaultCard, confirmButton])])
             stack.orientation = .vertical
-            stack.spacing = 12
+            stack.spacing = 14
             stack.alignment = .centerX
             return stack
         }
@@ -775,69 +787,84 @@ final class FullScreenWarningWindowController: NSWindowController {
         configureCustomField(customMinutesField, placeholder: "Minutes", value: settings.defaultSnoozeMinutes)
         configureCustomField(customBatteryField, placeholder: "Battery %", value: settings.defaultSnoozeBatteryThreshold)
 
-        let timeLabel = rowIcon("clock", accessibilityDescription: "Time snooze options")
+        let customTimeCard = SnoozeOptionCard(title: "Custom", actionTitle: "minutes", iconView: customClockView, target: self, action: #selector(selectSnoozeCard(_:)))
+        customTimeCard.snooze = .minutes(settings.defaultSnoozeMinutes)
+        customTimeCard.addInputField(customMinutesField)
+        customMinutesCard = customTimeCard
+
         let timeRow = row([
-            timeLabel,
-            snoozeButton(title: "5 min", value: .minutes(5), symbolName: "clock"),
-            snoozeButton(title: "15 min", value: .minutes(15), symbolName: "clock"),
-            snoozeButton(title: "30 min", value: .minutes(30), symbolName: "clock"),
-            customMinutesField,
-            actionButton(title: "Custom", symbolName: "clock.badge", action: #selector(customMinutesSnooze))
-        ])
-        let batteryLabel = rowIcon("battery.100", accessibilityDescription: "Battery snooze options")
-        let batteryRow = row([
-            batteryLabel,
-            snoozeButton(title: "20%", value: .batteryThreshold(20), symbolName: "battery.25"),
-            snoozeButton(title: "10%", value: .batteryThreshold(10), symbolName: "battery.25"),
-            snoozeButton(title: "5%", value: .batteryThreshold(5), symbolName: "battery.0"),
-            customBatteryField,
-            actionButton(title: "Custom", symbolName: "battery.100.bolt", action: #selector(customBatterySnooze))
+            rowLabel("Snooze for..."),
+            clockCard(minutes: 10),
+            clockCard(minutes: 20),
+            clockCard(minutes: 30),
+            customTimeCard
         ])
 
-        let stack = NSStackView(views: [title, timeRow, batteryRow])
+        let batteryRow = row([
+            rowLabel("Battery depletes to:"),
+            batteryCard(percent: 20, filledBars: 2),
+            batteryCard(percent: 10, filledBars: 1),
+            batteryCard(percent: 5, filledBars: 0),
+            customBatteryCard()
+        ])
+
+        let stack = NSStackView(views: [timeRow, batteryRow, confirmButton])
         stack.orientation = .vertical
-        stack.spacing = 12
+        stack.spacing = 16
         stack.alignment = .centerX
+        confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 190).isActive = true
         return stack
     }
 
     private func row(_ views: [NSView]) -> NSStackView {
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
-        stack.spacing = 10
+        stack.spacing = 12
         stack.alignment = .centerY
         return stack
     }
 
-    private func rowIcon(_ symbolName: String, accessibilityDescription: String) -> NSImageView {
-        let imageView = NSImageView()
-        imageView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityDescription)
-        imageView.symbolConfiguration = .init(pointSize: 20, weight: .medium)
-        imageView.contentTintColor = .secondaryLabelColor
-        imageView.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        imageView.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        return imageView
+    private func rowLabel(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 18, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        return label
     }
 
-    private func snoozeButton(title: String, value: WarningSnooze, symbolName: String) -> NSButton {
-        let button = SnoozeChoiceButton(title: title, target: self, action: #selector(staticSnooze(_:)))
-        button.bezelStyle = .rounded
-        button.controlSize = .large
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
-        button.imagePosition = .imageLeading
-        button.snooze = value
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 104).isActive = true
-        return button
+    private func clockCard(minutes: Int) -> SnoozeOptionCard {
+        let card = SnoozeOptionCard(title: "\(minutes)", actionTitle: "mins", iconView: ClockFaceView(minutes: minutes), target: self, action: #selector(selectSnoozeCard(_:)))
+        card.snooze = .minutes(minutes)
+        return card
     }
 
-    private func actionButton(title: String, symbolName: String, action: Selector) -> NSButton {
-        let button = SnoozeChoiceButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
-        button.controlSize = .large
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
-        button.imagePosition = .imageLeading
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 112).isActive = true
-        return button
+    private func batteryCard(percent: Int, filledBars: Int) -> SnoozeOptionCard {
+        let card = SnoozeOptionCard(title: "\(percent)%", actionTitle: "remaining", iconView: BatteryBarsView(filledBars: filledBars), target: self, action: #selector(selectSnoozeCard(_:)))
+        card.snooze = .batteryThreshold(percent)
+        return card
+    }
+
+    private func customBatteryCard() -> SnoozeOptionCard {
+        customBatteryView.filledBars = bars(forBatteryPercent: settings.defaultSnoozeBatteryThreshold)
+        let card = SnoozeOptionCard(title: "Custom", actionTitle: "% remaining", iconView: customBatteryView, target: self, action: #selector(selectSnoozeCard(_:)))
+        card.snooze = .batteryThreshold(settings.defaultSnoozeBatteryThreshold)
+        card.addInputField(customBatteryField)
+        customBatterySnoozeCard = card
+        return card
+    }
+
+    private func optionCard(for snooze: WarningSnooze, title: String) -> SnoozeOptionCard {
+        switch snooze {
+        case .minutes(let minutes):
+            let card = SnoozeOptionCard(title: title, actionTitle: "mins", iconView: ClockFaceView(minutes: minutes), target: self, action: #selector(selectSnoozeCard(_:)))
+            card.snooze = snooze
+            return card
+        case .batteryThreshold(let percent):
+            let card = SnoozeOptionCard(title: title, actionTitle: "remaining", iconView: BatteryBarsView(filledBars: bars(forBatteryPercent: percent)), target: self, action: #selector(selectSnoozeCard(_:)))
+            card.snooze = snooze
+            return card
+        }
     }
 
     private func configureCustomField(_ field: NSTextField, placeholder: String, value: Int) {
@@ -849,16 +876,7 @@ final class FullScreenWarningWindowController: NSWindowController {
         field.font = .systemFont(ofSize: 17, weight: .medium)
         field.controlSize = .large
         if !field.constraints.contains(where: { $0.firstAttribute == .width }) {
-            field.widthAnchor.constraint(equalToConstant: 92).isActive = true
-        }
-    }
-
-    private func symbolName(for snooze: WarningSnooze) -> String {
-        switch snooze {
-        case .minutes:
-            return "clock"
-        case .batteryThreshold(let percent):
-            return percent <= 5 ? "battery.0" : "battery.25"
+            field.widthAnchor.constraint(equalToConstant: 78).isActive = true
         }
     }
 
@@ -876,31 +894,133 @@ final class FullScreenWarningWindowController: NSWindowController {
         return "No movement was detected after power disconnected."
     }
 
-    @objc private func staticSnooze(_ sender: NSButton) {
-        guard let snooze = (sender as? SnoozeChoiceButton)?.snooze else { return }
-        onSnooze(snooze)
+    private func select(_ card: SnoozeOptionCard, snooze: WarningSnooze) {
+        selectedSnoozeCard?.isSelected = false
+        selectedSnoozeCard = card
+        card.isSelected = true
+        selectedSnooze = snooze
+        confirmButton.isEnabled = true
+    }
+
+    private func bars(forBatteryPercent percent: Int) -> Int {
+        min(max(Int((Double(percent) / 100.0 * 8.0).rounded(.down)), 0), 8)
+    }
+
+    @objc private func selectSnoozeCard(_ sender: SnoozeOptionCard) {
+        guard var snooze = sender.snooze else { return }
+        if sender === customMinutesCard {
+            let minutes = Int(customMinutesField.stringValue) ?? 0
+            guard minutes > 0 else { return }
+            snooze = .minutes(minutes)
+            sender.snooze = snooze
+        }
+        if sender === customBatterySnoozeCard {
+            let rawPercent = Int(customBatteryField.stringValue) ?? 0
+            let percent = min(max(rawPercent, 1), 100)
+            snooze = .batteryThreshold(percent)
+            sender.snooze = snooze
+        }
+        select(sender, snooze: snooze)
+    }
+
+    @objc private func confirmSelectedSnooze() {
+        guard let selectedSnooze else { return }
+        onSnooze(selectedSnooze)
     }
 
     @objc private func customMinutesSnooze() {
         let minutes = Int(customMinutesField.stringValue) ?? 0
         guard minutes > 0 else { return }
-        onSnooze(.minutes(minutes))
+        if let customMinutesCard {
+            customMinutesCard.snooze = .minutes(minutes)
+            select(customMinutesCard, snooze: .minutes(minutes))
+        }
+        confirmSelectedSnooze()
     }
 
     @objc private func customBatterySnooze() {
         let rawPercent = Int(customBatteryField.stringValue) ?? 0
         let percent = min(max(rawPercent, 1), 100)
-        onSnooze(.batteryThreshold(percent))
+        if let customBatterySnoozeCard {
+            customBatterySnoozeCard.snooze = .batteryThreshold(percent)
+            select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
+        }
+        confirmSelectedSnooze()
     }
 }
 
-final class SnoozeChoiceButton: NSButton {
+final class SnoozeOptionCard: NSControl {
     var snooze: WarningSnooze?
+    var isSelected: Bool = false {
+        didSet { updateSelectionAppearance() }
+    }
+
+    private let stack = NSStackView()
+
+    init(title: String, actionTitle: String, iconView: NSView, target: AnyObject?, action: Selector?) {
+        super.init(frame: .zero)
+        self.target = target
+        self.action = action
+        wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.masksToBounds = true
+        focusRingType = .none
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        titleLabel.textColor = .labelColor
+        titleLabel.alignment = .center
+
+        let actionLabel = NSTextField(labelWithString: actionTitle)
+        actionLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        actionLabel.textColor = .secondaryLabelColor
+        actionLabel.alignment = .center
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        iconView.heightAnchor.constraint(equalToConstant: 56).isActive = true
+
+        stack.orientation = .vertical
+        stack.spacing = 7
+        stack.alignment = .centerX
+        stack.edgeInsets = NSEdgeInsets(top: 13, left: 10, bottom: 12, right: 10)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(iconView)
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(actionLabel)
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 120),
+            heightAnchor.constraint(equalToConstant: 156),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        updateSelectionAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    func addInputField(_ field: NSTextField) {
+        stack.addArrangedSubview(field)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        _ = sendAction(action, to: target)
+    }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 36, 76:
-            performClick(nil)
+            _ = sendAction(action, to: target)
         case 123, 126:
             window?.selectPreviousKeyView(nil)
         case 124, 125:
@@ -909,9 +1029,163 @@ final class SnoozeChoiceButton: NSButton {
             super.keyDown(with: event)
         }
     }
+
+    private func updateSelectionAppearance() {
+        layer?.backgroundColor = (isSelected ? NSColor.controlAccentColor.withAlphaComponent(0.24) : NSColor.white.withAlphaComponent(0.14)).cgColor
+        layer?.borderWidth = isSelected ? 2 : 1
+        layer?.borderColor = (isSelected ? NSColor.controlAccentColor : NSColor.white.withAlphaComponent(0.24)).cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = isSelected ? 0.24 : 0.12
+        layer?.shadowRadius = isSelected ? 14 : 8
+        layer?.shadowOffset = CGSize(width: 0, height: 5)
+    }
+}
+
+final class ClockFaceView: NSView {
+    var minutes: Int? {
+        didSet { needsDisplay = true }
+    }
+
+    init(minutes: Int?) {
+        self.minutes = minutes
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let diameter = min(bounds.width, bounds.height) - 8
+        let rect = NSRect(x: (bounds.width - diameter) / 2, y: (bounds.height - diameter) / 2, width: diameter, height: diameter)
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+
+        NSColor.white.withAlphaComponent(0.18).setFill()
+        NSBezierPath(ovalIn: rect).fill()
+        NSColor.labelColor.withAlphaComponent(0.8).setStroke()
+        let outline = NSBezierPath(ovalIn: rect)
+        outline.lineWidth = 2
+        outline.stroke()
+
+        for tick in 0..<12 {
+            let angle = (Double(tick) / 12.0 * Double.pi * 2.0) - Double.pi / 2.0
+            let outer = point(from: center, radius: diameter / 2 - 5, angle: angle)
+            let inner = point(from: center, radius: diameter / 2 - (tick % 3 == 0 ? 12 : 9), angle: angle)
+            let path = NSBezierPath()
+            path.move(to: outer)
+            path.line(to: inner)
+            path.lineWidth = tick % 3 == 0 ? 2 : 1
+            NSColor.labelColor.withAlphaComponent(tick % 3 == 0 ? 0.65 : 0.35).setStroke()
+            path.stroke()
+        }
+
+        guard let minutes, minutes > 0 else { return }
+        let minuteAngle = (Double(minutes % 60) / 60.0 * Double.pi * 2.0) - Double.pi / 2.0
+        let hourAngle = -Double.pi / 2.0
+
+        drawHand(from: center, radius: diameter * 0.25, angle: hourAngle, width: 4, color: .labelColor)
+        drawHand(from: center, radius: diameter * 0.38, angle: minuteAngle, width: 3, color: .controlAccentColor)
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)).fill()
+    }
+
+    private func point(from center: NSPoint, radius: CGFloat, angle: Double) -> NSPoint {
+        NSPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
+    }
+
+    private func drawHand(from center: NSPoint, radius: CGFloat, angle: Double, width: CGFloat, color: NSColor) {
+        let path = NSBezierPath()
+        path.move(to: center)
+        path.line(to: point(from: center, radius: radius, angle: angle))
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        color.setStroke()
+        path.stroke()
+    }
+}
+
+final class BatteryBarsView: NSView {
+    var filledBars: Int {
+        didSet { needsDisplay = true }
+    }
+
+    init(filledBars: Int) {
+        self.filledBars = min(max(filledBars, 0), 8)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let body = NSRect(x: 6, y: bounds.midY - 15, width: bounds.width - 18, height: 30)
+        let nub = NSRect(x: body.maxX + 2, y: body.midY - 7, width: 6, height: 14)
+        let color: NSColor = filledBars == 0 ? .systemRed : filledBars <= 1 ? .systemOrange : .systemGreen
+
+        NSColor.white.withAlphaComponent(0.16).setFill()
+        NSBezierPath(roundedRect: body, xRadius: 7, yRadius: 7).fill()
+        color.withAlphaComponent(0.9).setStroke()
+        let outline = NSBezierPath(roundedRect: body, xRadius: 7, yRadius: 7)
+        outline.lineWidth = 2
+        outline.stroke()
+        NSBezierPath(roundedRect: nub, xRadius: 3, yRadius: 3).stroke()
+
+        let gap: CGFloat = 2
+        let inset = body.insetBy(dx: 6, dy: 7)
+        let barWidth = (inset.width - gap * 7) / 8
+        for index in 0..<8 {
+            let rect = NSRect(x: inset.minX + CGFloat(index) * (barWidth + gap), y: inset.minY, width: barWidth, height: inset.height)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+            (index < filledBars ? color : NSColor.labelColor.withAlphaComponent(0.16)).setFill()
+            path.fill()
+        }
+    }
 }
 
 extension FullScreenWarningWindowController: NSTextFieldDelegate {
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if field === customMinutesField, let customMinutesCard {
+            let minutes = Int(customMinutesField.stringValue) ?? 0
+            customMinutesCard.snooze = .minutes(max(minutes, 1))
+            select(customMinutesCard, snooze: .minutes(max(minutes, 1)))
+        }
+        if field === customBatteryField, let customBatterySnoozeCard {
+            let rawPercent = Int(customBatteryField.stringValue) ?? 0
+            let percent = min(max(rawPercent, 1), 100)
+            customBatterySnoozeCard.snooze = .batteryThreshold(percent)
+            select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
+        }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if field === customMinutesField {
+            let minutes = Int(customMinutesField.stringValue) ?? 0
+            customClockView.minutes = minutes > 0 ? minutes : nil
+            if let customMinutesCard, minutes > 0 {
+                customMinutesCard.snooze = .minutes(minutes)
+                select(customMinutesCard, snooze: .minutes(minutes))
+            }
+        }
+        if field === customBatteryField {
+            let rawPercent = Int(customBatteryField.stringValue) ?? 0
+            let percent = min(max(rawPercent, 1), 100)
+            customBatteryView.filledBars = bars(forBatteryPercent: percent)
+            if let customBatterySnoozeCard {
+                customBatterySnoozeCard.snooze = .batteryThreshold(percent)
+                select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
+            }
+        }
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard commandSelector == #selector(insertNewline(_:)) else { return false }
         if control === customMinutesField {
