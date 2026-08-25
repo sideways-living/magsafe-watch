@@ -30,6 +30,7 @@ pkgbuild \
   "$PKG_PATH"
 
 rm -rf "$PKG_DIR"
+xattr -cr "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1 || true
 echo "$PKG_PATH"

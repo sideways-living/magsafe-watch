@@ -632,6 +632,17 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 enum WarningSnooze {
     case minutes(Int)
     case batteryThreshold(Int)
+
+    func matches(_ other: WarningSnooze) -> Bool {
+        switch (self, other) {
+        case (.minutes(let lhs), .minutes(let rhs)):
+            return lhs == rhs
+        case (.batteryThreshold(let lhs), .batteryThreshold(let rhs)):
+            return lhs == rhs
+        default:
+            return false
+        }
+    }
 }
 
 enum SnoozeKind: String {
@@ -644,20 +655,15 @@ final class FullScreenWarningWindowController: NSWindowController {
     private let onSnooze: (WarningSnooze) -> Void
     private let batteryValue = NSTextField(labelWithString: "Battery unknown")
     private let reasonValue = NSTextField(wrappingLabelWithString: "")
-    private let customMinutesField = NSTextField()
-    private let customBatteryField = NSTextField()
-    private let customClockView = ClockFaceView(minutes: nil)
-    private let customBatteryView = BatteryBarsView(filledBars: 0)
     private var selectedSnooze: WarningSnooze?
     private weak var selectedSnoozeCard: SnoozeOptionCard?
-    private weak var customMinutesCard: SnoozeOptionCard?
-    private weak var customBatterySnoozeCard: SnoozeOptionCard?
     private lazy var confirmButton: NSButton = {
-        let button = NSButton(title: "Confirm Snooze", target: self, action: #selector(confirmSelectedSnooze))
+        let button = NSButton(title: "Submit", target: self, action: #selector(confirmSelectedSnooze))
         button.bezelStyle = .rounded
         button.controlSize = .large
         button.font = .systemFont(ofSize: 17, weight: .semibold)
         button.isEnabled = false
+        button.keyEquivalent = "\r"
         return button
     }()
 
@@ -679,6 +685,7 @@ final class FullScreenWarningWindowController: NSWindowController {
         window.isOpaque = false
         super.init(window: window)
         window.contentView = buildContentView()
+        window.defaultButtonCell = confirmButton.cell as? NSButtonCell
     }
 
     required init?(coder: NSCoder) {
@@ -775,44 +782,30 @@ final class FullScreenWarningWindowController: NSWindowController {
     }
 
     private func buildSnoozeControls() -> NSView {
-        if !settings.showAllSnoozeOptions {
-            let defaultCard = optionCard(for: settings.defaultSnooze, title: settings.defaultSnoozeTitle)
-            let stack = NSStackView(views: [rowLabel("Snooze"), row([defaultCard, confirmButton])])
-            stack.orientation = .vertical
-            stack.spacing = 14
-            stack.alignment = .centerX
-            return stack
-        }
-
-        configureCustomField(customMinutesField, placeholder: "Minutes", value: settings.defaultSnoozeMinutes)
-        configureCustomField(customBatteryField, placeholder: "Battery %", value: settings.defaultSnoozeBatteryThreshold)
-
-        let customTimeCard = SnoozeOptionCard(title: "Custom", actionTitle: "minutes", iconView: customClockView, target: self, action: #selector(selectSnoozeCard(_:)))
-        customTimeCard.snooze = .minutes(settings.defaultSnoozeMinutes)
-        customTimeCard.addInputField(customMinutesField)
-        customMinutesCard = customTimeCard
-
-        let timeRow = row([
-            rowLabel("Snooze for..."),
+        let timeCards = [
             clockCard(minutes: 10),
             clockCard(minutes: 20),
-            clockCard(minutes: 30),
-            customTimeCard
-        ])
+            clockCard(minutes: 30)
+        ]
 
-        let batteryRow = row([
-            rowLabel("Battery depletes to:"),
+        let batteryCards = [
             batteryCard(percent: 20, filledBars: 2),
             batteryCard(percent: 10, filledBars: 1),
-            batteryCard(percent: 5, filledBars: 0),
-            customBatteryCard()
-        ])
+            batteryCard(percent: 5, filledBars: 0)
+        ]
 
-        let stack = NSStackView(views: [timeRow, batteryRow, confirmButton])
+        let choices = row([
+            optionGroup(title: "Snooze for...", cards: timeCards),
+            optionGroup(title: "Or, until battery reaches...", cards: batteryCards)
+        ])
+        choices.spacing = 36
+
+        let stack = NSStackView(views: [choices, confirmButton])
         stack.orientation = .vertical
-        stack.spacing = 16
+        stack.spacing = 22
         stack.alignment = .centerX
-        confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 190).isActive = true
+        confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170).isActive = true
+        preselectDefaultCard(from: timeCards + batteryCards)
         return stack
     }
 
@@ -824,60 +817,36 @@ final class FullScreenWarningWindowController: NSWindowController {
         return stack
     }
 
-    private func rowLabel(_ title: String) -> NSTextField {
+    private func groupTitle(_ title: String) -> NSTextField {
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 18, weight: .semibold)
+        label.font = .systemFont(ofSize: 20, weight: .semibold)
         label.textColor = .secondaryLabelColor
-        label.alignment = .right
-        label.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        label.alignment = .center
         return label
+    }
+
+    private func optionGroup(title: String, cards: [SnoozeOptionCard]) -> NSStackView {
+        let cardRow = row(cards)
+        cardRow.spacing = 12
+        let stack = NSStackView(views: [groupTitle(title), cardRow])
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.alignment = .centerX
+        return stack
     }
 
     private func clockCard(minutes: Int) -> SnoozeOptionCard {
         let card = SnoozeOptionCard(title: "\(minutes)", actionTitle: "mins", iconView: ClockFaceView(minutes: minutes), target: self, action: #selector(selectSnoozeCard(_:)))
         card.snooze = .minutes(minutes)
+        card.submitAction = { [weak self] in self?.confirmSelectedSnooze() }
         return card
     }
 
     private func batteryCard(percent: Int, filledBars: Int) -> SnoozeOptionCard {
         let card = SnoozeOptionCard(title: "\(percent)%", actionTitle: "remaining", iconView: BatteryBarsView(filledBars: filledBars), target: self, action: #selector(selectSnoozeCard(_:)))
         card.snooze = .batteryThreshold(percent)
+        card.submitAction = { [weak self] in self?.confirmSelectedSnooze() }
         return card
-    }
-
-    private func customBatteryCard() -> SnoozeOptionCard {
-        customBatteryView.filledBars = bars(forBatteryPercent: settings.defaultSnoozeBatteryThreshold)
-        let card = SnoozeOptionCard(title: "Custom", actionTitle: "% remaining", iconView: customBatteryView, target: self, action: #selector(selectSnoozeCard(_:)))
-        card.snooze = .batteryThreshold(settings.defaultSnoozeBatteryThreshold)
-        card.addInputField(customBatteryField)
-        customBatterySnoozeCard = card
-        return card
-    }
-
-    private func optionCard(for snooze: WarningSnooze, title: String) -> SnoozeOptionCard {
-        switch snooze {
-        case .minutes(let minutes):
-            let card = SnoozeOptionCard(title: title, actionTitle: "mins", iconView: ClockFaceView(minutes: minutes), target: self, action: #selector(selectSnoozeCard(_:)))
-            card.snooze = snooze
-            return card
-        case .batteryThreshold(let percent):
-            let card = SnoozeOptionCard(title: title, actionTitle: "remaining", iconView: BatteryBarsView(filledBars: bars(forBatteryPercent: percent)), target: self, action: #selector(selectSnoozeCard(_:)))
-            card.snooze = snooze
-            return card
-        }
-    }
-
-    private func configureCustomField(_ field: NSTextField, placeholder: String, value: Int) {
-        field.placeholderString = placeholder
-        field.stringValue = "\(value)"
-        field.formatter = PositiveIntegerFormatter()
-        field.delegate = self
-        field.alignment = .center
-        field.font = .systemFont(ofSize: 17, weight: .medium)
-        field.controlSize = .large
-        if !field.constraints.contains(where: { $0.firstAttribute == .width }) {
-            field.widthAnchor.constraint(equalToConstant: 78).isActive = true
-        }
     }
 
     private func conciseReason(from reason: String) -> String {
@@ -906,20 +875,18 @@ final class FullScreenWarningWindowController: NSWindowController {
         min(max(Int((Double(percent) / 100.0 * 8.0).rounded(.down)), 0), 8)
     }
 
+    private func preselectDefaultCard(from cards: [SnoozeOptionCard]) {
+        guard let defaultCard = cards.first(where: { card in
+            guard let snooze = card.snooze else { return false }
+            return snooze.matches(settings.defaultSnooze)
+        }), let snooze = defaultCard.snooze else {
+            return
+        }
+        select(defaultCard, snooze: snooze)
+    }
+
     @objc private func selectSnoozeCard(_ sender: SnoozeOptionCard) {
-        guard var snooze = sender.snooze else { return }
-        if sender === customMinutesCard {
-            let minutes = Int(customMinutesField.stringValue) ?? 0
-            guard minutes > 0 else { return }
-            snooze = .minutes(minutes)
-            sender.snooze = snooze
-        }
-        if sender === customBatterySnoozeCard {
-            let rawPercent = Int(customBatteryField.stringValue) ?? 0
-            let percent = min(max(rawPercent, 1), 100)
-            snooze = .batteryThreshold(percent)
-            sender.snooze = snooze
-        }
+        guard let snooze = sender.snooze else { return }
         select(sender, snooze: snooze)
     }
 
@@ -928,29 +895,11 @@ final class FullScreenWarningWindowController: NSWindowController {
         onSnooze(selectedSnooze)
     }
 
-    @objc private func customMinutesSnooze() {
-        let minutes = Int(customMinutesField.stringValue) ?? 0
-        guard minutes > 0 else { return }
-        if let customMinutesCard {
-            customMinutesCard.snooze = .minutes(minutes)
-            select(customMinutesCard, snooze: .minutes(minutes))
-        }
-        confirmSelectedSnooze()
-    }
-
-    @objc private func customBatterySnooze() {
-        let rawPercent = Int(customBatteryField.stringValue) ?? 0
-        let percent = min(max(rawPercent, 1), 100)
-        if let customBatterySnoozeCard {
-            customBatterySnoozeCard.snooze = .batteryThreshold(percent)
-            select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
-        }
-        confirmSelectedSnooze()
-    }
 }
 
 final class SnoozeOptionCard: NSControl {
     var snooze: WarningSnooze?
+    var submitAction: (() -> Void)?
     var isSelected: Bool = false {
         didSet { updateSelectionAppearance() }
     }
@@ -1020,7 +969,11 @@ final class SnoozeOptionCard: NSControl {
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 36, 76:
-            _ = sendAction(action, to: target)
+            if isSelected {
+                submitAction?()
+            } else {
+                _ = sendAction(action, to: target)
+            }
         case 123, 126:
             window?.selectPreviousKeyView(nil)
         case 124, 125:
@@ -1146,57 +1099,6 @@ final class BatteryBarsView: NSView {
             (index < filledBars ? color : NSColor.labelColor.withAlphaComponent(0.16)).setFill()
             path.fill()
         }
-    }
-}
-
-extension FullScreenWarningWindowController: NSTextFieldDelegate {
-    func controlTextDidBeginEditing(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField else { return }
-        if field === customMinutesField, let customMinutesCard {
-            let minutes = Int(customMinutesField.stringValue) ?? 0
-            customMinutesCard.snooze = .minutes(max(minutes, 1))
-            select(customMinutesCard, snooze: .minutes(max(minutes, 1)))
-        }
-        if field === customBatteryField, let customBatterySnoozeCard {
-            let rawPercent = Int(customBatteryField.stringValue) ?? 0
-            let percent = min(max(rawPercent, 1), 100)
-            customBatterySnoozeCard.snooze = .batteryThreshold(percent)
-            select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
-        }
-    }
-
-    func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField else { return }
-        if field === customMinutesField {
-            let minutes = Int(customMinutesField.stringValue) ?? 0
-            customClockView.minutes = minutes > 0 ? minutes : nil
-            if let customMinutesCard, minutes > 0 {
-                customMinutesCard.snooze = .minutes(minutes)
-                select(customMinutesCard, snooze: .minutes(minutes))
-            }
-        }
-        if field === customBatteryField {
-            let rawPercent = Int(customBatteryField.stringValue) ?? 0
-            let percent = min(max(rawPercent, 1), 100)
-            customBatteryView.filledBars = bars(forBatteryPercent: percent)
-            if let customBatterySnoozeCard {
-                customBatterySnoozeCard.snooze = .batteryThreshold(percent)
-                select(customBatterySnoozeCard, snooze: .batteryThreshold(percent))
-            }
-        }
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(insertNewline(_:)) else { return false }
-        if control === customMinutesField {
-            customMinutesSnooze()
-            return true
-        }
-        if control === customBatteryField {
-            customBatterySnooze()
-            return true
-        }
-        return false
     }
 }
 

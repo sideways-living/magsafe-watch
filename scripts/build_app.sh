@@ -2,15 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="$ROOT_DIR/.build/release"
+BUILD_ROOT="${MAGSAFEWATCH_BUILD_ROOT:-/private/tmp/magsafe-watch-build}"
+BUILD_DIR="$BUILD_ROOT/release"
 APP_DIR="$ROOT_DIR/outputs/MagSafe Watch.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build/module-cache"
-export SWIFTPM_HOME="$ROOT_DIR/.build/swiftpm-home"
+export CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache"
+export SWIFTPM_HOME="$BUILD_ROOT/swiftpm-home"
 
-swift build -c release --package-path "$ROOT_DIR"
+swift build -c release --package-path "$ROOT_DIR" --scratch-path "$BUILD_ROOT"
 
 pkill -f "$APP_DIR/Contents/MacOS/MagSafe Watch" >/dev/null 2>&1 || true
 for _ in {1..20}; do
