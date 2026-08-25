@@ -656,7 +656,9 @@ final class FullScreenWarningWindowController: NSWindowController {
     private let batteryValue = NSTextField(labelWithString: "Battery unknown")
     private let reasonValue = NSTextField(wrappingLabelWithString: "")
     private var selectedSnooze: WarningSnooze?
+    private var visibleDefaultSnooze: WarningSnooze?
     private weak var selectedSnoozeCard: SnoozeOptionCard?
+    private let defaultSelectionCheckbox = NSButton(checkboxWithTitle: "Set this Snooze period as default.", target: nil, action: nil)
     private lazy var confirmButton: NSButton = {
         let button = NSButton(title: "Submit", target: self, action: #selector(confirmSelectedSnooze))
         button.bezelStyle = .rounded
@@ -794,15 +796,12 @@ final class FullScreenWarningWindowController: NSWindowController {
             batteryCard(percent: 5, filledBars: 0)
         ]
 
-        let choices = row([
-            optionGroup(title: "Snooze for...", cards: timeCards),
-            optionGroup(title: "Or, until battery reaches...", cards: batteryCards)
-        ])
-        choices.spacing = 36
+        let choices = choicesView(timeCards: timeCards, batteryCards: batteryCards)
+        configureDefaultSelectionCheckbox()
 
-        let stack = NSStackView(views: [choices, confirmButton])
+        let stack = NSStackView(views: [choices, defaultSelectionCheckbox, confirmButton])
         stack.orientation = .vertical
-        stack.spacing = 22
+        stack.spacing = 18
         stack.alignment = .centerX
         confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170).isActive = true
         preselectDefaultCard(from: timeCards + batteryCards)
@@ -825,14 +824,45 @@ final class FullScreenWarningWindowController: NSWindowController {
         return label
     }
 
-    private func optionGroup(title: String, cards: [SnoozeOptionCard]) -> NSStackView {
-        let cardRow = row(cards)
-        cardRow.spacing = 12
-        let stack = NSStackView(views: [groupTitle(title), cardRow])
-        stack.orientation = .vertical
-        stack.spacing = 12
-        stack.alignment = .centerX
-        return stack
+    private func choicesView(timeCards: [SnoozeOptionCard], batteryCards: [SnoozeOptionCard]) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let timeTitle = groupTitle("Snooze for...")
+        let batteryTitle = groupTitle("Until Battery depletes to:")
+        let timeRow = row(timeCards)
+        let batteryRow = row(batteryCards)
+        let orLabel = NSTextField(labelWithString: "or")
+        orLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        orLabel.textColor = .secondaryLabelColor
+        orLabel.alignment = .center
+
+        [timeTitle, batteryTitle, timeRow, batteryRow, orLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview($0)
+        }
+
+        NSLayoutConstraint.activate([
+            timeTitle.topAnchor.constraint(equalTo: container.topAnchor),
+            timeTitle.centerXAnchor.constraint(equalTo: timeRow.centerXAnchor),
+            batteryTitle.topAnchor.constraint(equalTo: container.topAnchor),
+            batteryTitle.centerXAnchor.constraint(equalTo: batteryRow.centerXAnchor),
+
+            timeRow.topAnchor.constraint(equalTo: timeTitle.bottomAnchor, constant: 12),
+            timeRow.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            timeRow.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            orLabel.leadingAnchor.constraint(equalTo: timeRow.trailingAnchor, constant: 28),
+            orLabel.centerYAnchor.constraint(equalTo: timeRow.centerYAnchor),
+            orLabel.widthAnchor.constraint(equalToConstant: 34),
+
+            batteryRow.leadingAnchor.constraint(equalTo: orLabel.trailingAnchor, constant: 28),
+            batteryRow.topAnchor.constraint(equalTo: batteryTitle.bottomAnchor, constant: 12),
+            batteryRow.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            batteryRow.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+
+        return container
     }
 
     private func clockCard(minutes: Int) -> SnoozeOptionCard {
@@ -869,6 +899,7 @@ final class FullScreenWarningWindowController: NSWindowController {
         card.isSelected = true
         selectedSnooze = snooze
         confirmButton.isEnabled = true
+        updateDefaultSelectionCheckbox()
     }
 
     private func bars(forBatteryPercent percent: Int) -> Int {
@@ -880,9 +911,58 @@ final class FullScreenWarningWindowController: NSWindowController {
             guard let snooze = card.snooze else { return false }
             return snooze.matches(settings.defaultSnooze)
         }), let snooze = defaultCard.snooze else {
+            visibleDefaultSnooze = nil
+            updateDefaultSelectionCheckbox()
             return
         }
+        visibleDefaultSnooze = snooze
         select(defaultCard, snooze: snooze)
+    }
+
+    private func configureDefaultSelectionCheckbox() {
+        defaultSelectionCheckbox.target = self
+        defaultSelectionCheckbox.action = #selector(toggleDefaultSelectionCheckbox(_:))
+        defaultSelectionCheckbox.font = .systemFont(ofSize: 14, weight: .medium)
+        defaultSelectionCheckbox.controlSize = .regular
+        defaultSelectionCheckbox.state = .off
+        defaultSelectionCheckbox.isEnabled = false
+        defaultSelectionCheckbox.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+        updateDefaultSelectionCheckbox()
+    }
+
+    private func updateDefaultSelectionCheckbox() {
+        guard let selectedSnooze else {
+            defaultSelectionCheckbox.title = "Set this Snooze period as default."
+            defaultSelectionCheckbox.state = .off
+            defaultSelectionCheckbox.isEnabled = false
+            return
+        }
+
+        if let visibleDefaultSnooze, selectedSnooze.matches(visibleDefaultSnooze) {
+            defaultSelectionCheckbox.title = "This is your default Snooze period."
+            defaultSelectionCheckbox.state = .off
+            defaultSelectionCheckbox.isEnabled = false
+            return
+        }
+
+        defaultSelectionCheckbox.title = visibleDefaultSnooze == nil
+            ? "Set this Snooze period as default."
+            : "Change my default Snooze period to this selection"
+        defaultSelectionCheckbox.isEnabled = true
+    }
+
+    private func saveSelectedSnoozeAsDefaultIfNeeded() {
+        guard defaultSelectionCheckbox.state == .on, let selectedSnooze else { return }
+        switch selectedSnooze {
+        case .minutes(let minutes):
+            settings.defaultSnoozeKind = .time
+            settings.defaultSnoozeMinutes = minutes
+        case .batteryThreshold(let percent):
+            settings.defaultSnoozeKind = .battery
+            settings.defaultSnoozeBatteryThreshold = percent
+        }
+        settings.save()
+        visibleDefaultSnooze = selectedSnooze
     }
 
     @objc private func selectSnoozeCard(_ sender: SnoozeOptionCard) {
@@ -892,7 +972,13 @@ final class FullScreenWarningWindowController: NSWindowController {
 
     @objc private func confirmSelectedSnooze() {
         guard let selectedSnooze else { return }
+        saveSelectedSnoozeAsDefaultIfNeeded()
         onSnooze(selectedSnooze)
+    }
+
+    @objc private func toggleDefaultSelectionCheckbox(_ sender: NSButton) {
+        guard sender.state == .on else { return }
+        updateDefaultSelectionCheckbox()
     }
 
 }
