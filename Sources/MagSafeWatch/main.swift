@@ -101,9 +101,6 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let menuBarImage = NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
-        menuBarImage?.isTemplate = true
-        statusItem.button?.image = menuBarImage
         statusItem.button?.title = " MagSafe"
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.setAccessibilityLabel("MagSafe Watch")
@@ -128,6 +125,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMenu.addItem(batteryStatusMenuItem)
 
         statusItem.menu = statusMenu
+        updateStatusIcon(for: latestState)
         refreshStatusMenu()
     }
 
@@ -187,7 +185,40 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusIcon(for state: PowerState) {
         statusItem?.button?.toolTip = "MagSafe Watch: \(state.sourceDescription)"
+        statusItem?.button?.image = menuBarImage(for: state)
         refreshStatusMenu()
+    }
+
+    private func menuBarImage(for state: PowerState) -> NSImage? {
+        let imageName = menuBarImageName(isCharging: state.isOnACPower, batteryPercent: state.batteryPercent)
+        let image = NSImage(named: imageName) ?? NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
+        image?.isTemplate = false
+        image?.size = NSSize(width: 18, height: 18)
+        return image
+    }
+
+    private func menuBarImageName(isCharging: Bool, batteryPercent: Int?) -> String {
+        let percent = batteryPercent.map { min(max($0, 0), 100) }
+        if isCharging {
+            guard let percent else { return "MagSafeWatchMenuBarCharging0" }
+            if percent >= 95 { return "MagSafeWatchMenuBarChargingFull" }
+            if percent >= 80 { return "MagSafeWatchMenuBarCharging80" }
+            if percent >= 60 { return "MagSafeWatchMenuBarCharging60" }
+            if percent >= 50 { return "MagSafeWatchMenuBarCharging50" }
+            if percent >= 30 { return "MagSafeWatchMenuBarCharging30" }
+            if percent >= 20 { return "MagSafeWatchMenuBarCharging20" }
+            return "MagSafeWatchMenuBarCharging0"
+        }
+
+        guard let percent else { return "MagSafeWatchMenuBarNotCharging0" }
+        if percent >= 100 { return "MagSafeWatchMenuBarNotChargingFull" }
+        if percent >= 95 { return "MagSafeWatchMenuBarNotCharging6" }
+        if percent >= 80 { return "MagSafeWatchMenuBarNotCharging5" }
+        if percent >= 65 { return "MagSafeWatchMenuBarNotCharging4" }
+        if percent >= 50 { return "MagSafeWatchMenuBarNotCharging3" }
+        if percent >= 35 { return "MagSafeWatchMenuBarNotCharging2" }
+        if percent >= 20 { return "MagSafeWatchMenuBarNotCharging1" }
+        return "MagSafeWatchMenuBarNotCharging0"
     }
 
     private func refreshStatusMenu() {

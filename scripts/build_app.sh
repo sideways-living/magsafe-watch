@@ -25,6 +25,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"
 swift "$ROOT_DIR/scripts/generate_icon.swift" "$ROOT_DIR/Assets/MagSafeWatchLogo.svg" "$RESOURCES_DIR"
 cp "$ROOT_DIR/Assets/MagSafeWatchAppIcon.icns" "$RESOURCES_DIR/MagSafeWatch.icns"
+cp "$ROOT_DIR"/Assets/MenuBarIcons/*.png "$RESOURCES_DIR"/
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
