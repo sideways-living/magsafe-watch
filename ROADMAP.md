@@ -14,8 +14,7 @@ See `docs/CONCEPT.md` for the current detection model and limitations.
 
 ## Notification Provider Architecture
 
-Before adding a native iPhone or Apple Watch companion, the Mac app should split
-notification delivery into separate providers:
+The Mac app now splits notification delivery into separate providers:
 
 - Local Mac notifications
 - Local Mac alert sound
@@ -69,17 +68,17 @@ Native iPhone/watchOS support is more polished but adds cost and complexity:
 
 ### Phase 1: Provider Cleanup
 
-- Introduce a notification provider protocol in the Mac app.
-- Move local notification, sound, and webhook delivery into separate providers.
-- Add provider-specific test buttons.
-- Add provider health/status display.
+- Done: Introduce a notification provider protocol in the Mac app.
+- Done: Move local notification, sound, and webhook delivery into separate providers.
+- Done: Add provider-specific test buttons.
+- Done: Add provider diagnostics/status display through the Status page diagnostics feed.
 
 ### Phase 2: Webhook Polish
 
-- Support named webhook profiles.
-- Add payload preview.
-- Add retry/backoff for failed webhooks.
-- Add delivery logs in the Status page.
+- Future: Support named webhook profiles.
+- Future: Add payload preview.
+- Done: Add retry/backoff for failed webhooks.
+- Done: Add delivery logs in the Status page.
 
 ### Phase 3: Native Companion Prototype
 

@@ -21,8 +21,8 @@ The app posts this payload:
 4. Open `Advanced Config`.
 5. Set `webhookURL` to the provider URL.
 6. Save the config file and restart MagSafe Watch.
-7. Use `Send Test Alert` to confirm local alerts, then unplug while stationary to
-   test the webhook path.
+7. Use `Test Webhook` to confirm the webhook provider. Use the Status page
+   diagnostics to confirm each attempt and HTTP result.
 
 ## Pushover
 
@@ -68,7 +68,8 @@ Home Assistant works well if it already handles your household notifications.
 
 ## Notes
 
-- The app currently sends webhooks fire-and-forget.
-- The Status page diagnostics show whether webhooks were skipped, sent, failed,
-  or completed with an HTTP status.
+- The app retries network errors, HTTP 429, and HTTP 5xx responses with short
+  backoff.
+- The Status page diagnostics show whether webhooks were skipped, retried,
+  failed, or completed with an HTTP status.
 - Avoid putting sensitive API tokens directly in the URL if the Mac is shared.

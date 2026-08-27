@@ -7,9 +7,10 @@
 3. Open `Notification Settings`.
 4. Enable notifications for MagSafe Watch.
 5. Open `Notifications` and confirm `Show macOS notification banners` is on.
-6. Use `Send Test Alert`.
+6. Use `Test Mac Notification`.
 
-If sound is missing, confirm `Play alert sound on this Mac` is on.
+If sound is missing, confirm `Play alert sound on this Mac` is on and use
+`Test Sound`.
 
 ## No Menu Bar Icon Appears
 
@@ -70,13 +71,15 @@ suppressed.
 3. Open `Advanced Config`.
 4. Confirm `webhookURL` is set.
 5. Trigger an unplug event while stationary.
-6. Check Status page diagnostics.
+6. Or use `Test Webhook`.
+7. Check Status page diagnostics.
 
 Diagnostics will report:
 
 - Webhook disabled.
 - Missing webhook URL.
 - Webhook sending.
+- Webhook retry scheduled.
 - Webhook failed with an error.
 - Webhook completed with an HTTP status.
 
@@ -85,11 +88,7 @@ automation or mobile notification settings.
 
 ## Launch At Login
 
-Use:
-
-```bash
-./scripts/install_login_item.sh
-```
+Open `Settings` and enable `Launch MagSafe Watch when I log in`.
 
 Or open MagSafe Watch > `Permissions` > `Open Login Items` and add the app
 manually.

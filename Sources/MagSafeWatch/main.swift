@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import IOKit.hid
 import IOKit.ps
+import ServiceManagement
 import UserNotifications
 
 @main
@@ -39,6 +40,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var fullScreenSnoozeBatteryThreshold: Int?
     private var accidentalDisconnectAlerted = false
     private var updateTimer: Timer?
+    private var latestReleaseURL: URL?
     private var latestState = PowerState(isOnACPower: true, sourceDescription: "Unknown", batteryPercent: nil)
     private var motionCheckID = UUID()
 
@@ -55,6 +57,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         monitor.start()
         inputMonitor.start()
+        applyLaunchAtLoginSetting()
         scheduleUpdateChecks()
     }
 
@@ -569,6 +572,18 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notifier.alert(title: "MagSafe Watch test", body: "Alerts are working on this Mac.")
     }
 
+    @objc private func sendTestSound() {
+        notifier.testSound()
+    }
+
+    @objc private func sendTestLocalNotification() {
+        notifier.testLocalNotification()
+    }
+
+    @objc private func sendTestWebhook() {
+        notifier.testWebhook()
+    }
+
     @objc private func showStatusWindow() {
         if statusWindowController == nil {
             statusWindowController = StatusWindowController(
@@ -576,10 +591,15 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 testAlertHandler: { [weak self] in self?.sendTestAlert() },
                 notificationPermissionHandler: { [weak self] in self?.notifier.requestAuthorization() },
                 checkForUpdatesHandler: { [weak self] in self?.checkForUpdates(manual: true) },
+                openLatestReleaseHandler: { [weak self] in self?.openLatestReleasePage() },
                 updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
                 monitorChangedHandler: { [weak self] in self?.handleMonitoringSettingChanged() },
+                launchAtLoginChangedHandler: { [weak self] in self?.applyLaunchAtLoginSetting() },
                 presentationChangedHandler: { [weak self] in self?.applyPresentationSettings() },
                 openConfigHandler: { [weak self] in self?.openConfigFile() },
+                soundTestHandler: { [weak self] in self?.sendTestSound() },
+                localNotificationTestHandler: { [weak self] in self?.sendTestLocalNotification() },
+                webhookTestHandler: { [weak self] in self?.sendTestWebhook() },
                 diagnosticsProvider: { [weak self] in self?.diagnosticsLog.summary() ?? "No diagnostics recorded yet." }
             )
         }
@@ -614,6 +634,25 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
+    private func applyLaunchAtLoginSetting() {
+        let service = SMAppService.mainApp
+        do {
+            if settings.launchAtLoginEnabled {
+                if service.status != .enabled {
+                    try service.register()
+                }
+                diagnosticsLog.add("Launch at login enabled or awaiting macOS approval.")
+            } else {
+                if service.status == .enabled || service.status == .requiresApproval {
+                    try service.unregister()
+                }
+                diagnosticsLog.add("Launch at login disabled.")
+            }
+        } catch {
+            diagnosticsLog.add("Launch at login update failed: \(error.localizedDescription)")
+        }
+    }
+
     @objc private func checkForUpdatesFromMenu() {
         showStatusWindow()
         statusWindowController?.showStatusPage()
@@ -631,6 +670,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 switch result {
                 case .available(let version, let url):
+                    self.latestReleaseURL = url
+                    self.statusWindowController?.setReleasePageAvailable(true)
                     self.statusWindowController?.updateUpdateStatus("Update available: \(version)")
                     self.notifier.alert(
                         title: "MagSafe Watch update available",
@@ -639,12 +680,16 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if manual {
                         NSWorkspace.shared.open(url)
                     }
-                case .current(let version):
+                case .current(let version, let url):
+                    self.latestReleaseURL = url
+                    self.statusWindowController?.setReleasePageAvailable(url != nil)
                     self.statusWindowController?.updateUpdateStatus("Up to date: \(version)")
                     if manual {
                         self.notifier.alert(title: "MagSafe Watch is up to date", body: "You are running version \(version).")
                     }
                 case .notConfigured:
+                    self.latestReleaseURL = nil
+                    self.statusWindowController?.setReleasePageAvailable(false)
                     self.statusWindowController?.updateUpdateStatus("Update feed not configured")
                     if manual {
                         self.notifier.alert(
@@ -653,6 +698,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         )
                     }
                 case .failed(let message):
+                    self.latestReleaseURL = nil
+                    self.statusWindowController?.setReleasePageAvailable(false)
                     self.statusWindowController?.updateUpdateStatus("Update check failed")
                     if manual {
                         self.notifier.alert(title: "Update check failed", body: message)
@@ -660,6 +707,14 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
+    }
+
+    @objc private func openLatestReleasePage() {
+        guard let latestReleaseURL else {
+            diagnosticsLog.add("Release page not opened: no latest release URL available.")
+            return
+        }
+        NSWorkspace.shared.open(latestReleaseURL)
     }
 
     @objc private func openSettings() {
@@ -1277,31 +1332,42 @@ final class StatusWindowController: NSWindowController {
     private let testAlertHandler: () -> Void
     private let notificationPermissionHandler: () -> Void
     private let checkForUpdatesHandler: () -> Void
+    private let openLatestReleaseHandler: () -> Void
     private let updateScheduleChangedHandler: () -> Void
     private let monitorChangedHandler: () -> Void
+    private let launchAtLoginChangedHandler: () -> Void
     private let presentationChangedHandler: () -> Void
     private let openConfigHandler: () -> Void
+    private let soundTestHandler: () -> Void
+    private let localNotificationTestHandler: () -> Void
+    private let webhookTestHandler: () -> Void
     private let diagnosticsProvider: () -> String
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
     private let motionValue = NSTextField(labelWithString: "Checking...")
     private let inputValue = NSTextField(labelWithString: "Checking...")
     private let updateValue = NSTextField(labelWithString: "Not checked")
+    private let openReleaseButton = NSButton(title: "Open Latest Release", target: nil, action: nil)
     private let diagnosticsValue = NSTextField(wrappingLabelWithString: "No diagnostics recorded yet.")
     private let defaultSnoozeKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let defaultSnoozeValueField = NSTextField()
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Permissions", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, presentationChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void, diagnosticsProvider: @escaping () -> String) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, openLatestReleaseHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, launchAtLoginChangedHandler: @escaping () -> Void, presentationChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void, soundTestHandler: @escaping () -> Void, localNotificationTestHandler: @escaping () -> Void, webhookTestHandler: @escaping () -> Void, diagnosticsProvider: @escaping () -> String) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
         self.notificationPermissionHandler = notificationPermissionHandler
         self.checkForUpdatesHandler = checkForUpdatesHandler
+        self.openLatestReleaseHandler = openLatestReleaseHandler
         self.updateScheduleChangedHandler = updateScheduleChangedHandler
         self.monitorChangedHandler = monitorChangedHandler
+        self.launchAtLoginChangedHandler = launchAtLoginChangedHandler
         self.presentationChangedHandler = presentationChangedHandler
         self.openConfigHandler = openConfigHandler
+        self.soundTestHandler = soundTestHandler
+        self.localNotificationTestHandler = localNotificationTestHandler
+        self.webhookTestHandler = webhookTestHandler
         self.diagnosticsProvider = diagnosticsProvider
 
         let window = NSWindow(
@@ -1346,6 +1412,10 @@ final class StatusWindowController: NSWindowController {
 
     func updateUpdateStatus(_ status: String) {
         updateValue.stringValue = status
+    }
+
+    func setReleasePageAvailable(_ available: Bool) {
+        openReleaseButton.isEnabled = available
     }
 
     private func buildContentView() -> NSView {
@@ -1439,7 +1509,8 @@ final class StatusWindowController: NSWindowController {
             checkbox(title: "Treat external keyboard or mouse input as desk activity", isOn: settings.externalInputDeskSignalEnabled, action: #selector(toggleExternalInputDeskSignal(_:))),
             checkbox(title: "Repeat reminders while the Mac remains unplugged", isOn: settings.repeatRemindersEnabled, action: #selector(toggleRepeatReminders(_:))),
             checkbox(title: "Show all available snooze periods", isOn: settings.showAllSnoozeOptions, action: #selector(toggleShowAllSnoozeOptions(_:))),
-            checkbox(title: "Automatically check for app updates", isOn: settings.autoUpdateChecksEnabled, action: #selector(toggleAutoUpdateChecks(_:)))
+            checkbox(title: "Automatically check for app updates", isOn: settings.autoUpdateChecksEnabled, action: #selector(toggleAutoUpdateChecks(_:))),
+            checkbox(title: "Launch MagSafe Watch when I log in", isOn: settings.launchAtLoginEnabled, action: #selector(toggleLaunchAtLogin(_:)))
         ]
 
         let snoozeControls = buildDefaultSnoozeControls()
@@ -1489,10 +1560,16 @@ final class StatusWindowController: NSWindowController {
         let webhook = paragraph(settings.webhookURL == nil ? "Webhook URL is not configured. Add one in Advanced Config to use iPhone or Apple Watch push services." : "Webhook URL is configured.")
         let testButton = NSButton(title: "Send Test Alert", target: self, action: #selector(sendTestAlert))
         testButton.bezelStyle = .rounded
+        let soundButton = NSButton(title: "Test Sound", target: self, action: #selector(testSound))
+        soundButton.bezelStyle = .rounded
+        let localButton = NSButton(title: "Test Mac Notification", target: self, action: #selector(testLocalNotification))
+        localButton.bezelStyle = .rounded
+        let webhookButton = NSButton(title: "Test Webhook", target: self, action: #selector(testWebhook))
+        webhookButton.bezelStyle = .rounded
         let configButton = NSButton(title: "Open Advanced Config", target: self, action: #selector(openConfig))
         configButton.bezelStyle = .rounded
 
-        return pageStack([title, body] + controls + [webhook, row([testButton, configButton])])
+        return pageStack([title, body] + controls + [webhook, row([testButton, soundButton]), row([localButton, webhookButton, configButton])])
     }
 
     private func buildPermissionsPage() -> NSView {
@@ -1566,11 +1643,15 @@ final class StatusWindowController: NSWindowController {
 
         let updateButton = NSButton(title: "Check for Updates", target: self, action: #selector(checkForUpdates))
         updateButton.bezelStyle = .rounded
+        openReleaseButton.target = self
+        openReleaseButton.action = #selector(openLatestRelease)
+        openReleaseButton.bezelStyle = .rounded
+        openReleaseButton.isEnabled = false
 
         let quitButton = NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:)))
         quitButton.bezelStyle = .rounded
 
-        return pageStack([title, description, grid, row([updateButton, quitButton])])
+        return pageStack([title, description, grid, row([updateButton, openReleaseButton, quitButton])])
     }
 
     private func pageStack(_ views: [NSView]) -> NSView {
@@ -1629,6 +1710,18 @@ final class StatusWindowController: NSWindowController {
         testAlertHandler()
     }
 
+    @objc private func testSound() {
+        soundTestHandler()
+    }
+
+    @objc private func testLocalNotification() {
+        localNotificationTestHandler()
+    }
+
+    @objc private func testWebhook() {
+        webhookTestHandler()
+    }
+
     @objc private func openSettingsPage() {
         selectPage(1)
     }
@@ -1643,6 +1736,10 @@ final class StatusWindowController: NSWindowController {
 
     @objc private func checkForUpdates() {
         checkForUpdatesHandler()
+    }
+
+    @objc private func openLatestRelease() {
+        openLatestReleaseHandler()
     }
 
     @objc private func requestNotificationPermission() {
@@ -1762,6 +1859,12 @@ final class StatusWindowController: NSWindowController {
         settings.autoUpdateChecksEnabled = sender.state == .on
         settings.save()
         updateScheduleChangedHandler()
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSButton) {
+        settings.launchAtLoginEnabled = sender.state == .on
+        settings.save()
+        launchAtLoginChangedHandler()
     }
 
     @objc private func toggleLocalNotifications(_ sender: NSButton) {
@@ -2174,7 +2277,7 @@ final class InputActivityMonitor {
 
 enum UpdateCheckResult {
     case available(version: String, url: URL)
-    case current(version: String)
+    case current(version: String, url: URL?)
     case notConfigured
     case failed(message: String)
 }
@@ -2221,10 +2324,11 @@ final class UpdateChecker {
                 let latestVersion = Version(release.tagName)
                 let currentVersion = Version(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
 
-                if latestVersion > currentVersion, let url = URL(string: release.htmlURL) {
+                let releaseURL = URL(string: release.htmlURL)
+                if latestVersion > currentVersion, let url = releaseURL {
                     completionBox.completion(.available(version: release.tagName, url: url))
                 } else {
-                    completionBox.completion(.current(version: currentVersion.description))
+                    completionBox.completion(.current(version: currentVersion.description, url: releaseURL))
                 }
             } catch {
                 completionBox.completion(.failed(message: "The update feed could not be read: \(error.localizedDescription)"))
@@ -2272,7 +2376,39 @@ private struct Version: Comparable, CustomStringConvertible {
     }
 }
 
-final class AlertNotifier {
+struct NotificationEvent {
+    let title: String
+    let message: String
+    let source: String
+}
+
+protocol NotificationProvider {
+    var name: String { get }
+    func send(_ event: NotificationEvent)
+}
+
+final class SoundNotificationProvider: NotificationProvider {
+    let name = "Sound"
+    private let settings: AppSettings
+    private let diagnosticsLog: DiagnosticsLog
+
+    init(settings: AppSettings, diagnosticsLog: DiagnosticsLog) {
+        self.settings = settings
+        self.diagnosticsLog = diagnosticsLog
+    }
+
+    func send(_ event: NotificationEvent) {
+        guard settings.soundEnabled else {
+            diagnosticsLog.add("Sound skipped: sound notifications disabled.")
+            return
+        }
+        NSSound(named: "Basso")?.play()
+        diagnosticsLog.add("Sound played for: \(event.title).")
+    }
+}
+
+final class LocalNotificationProvider: NotificationProvider {
+    let name = "Mac Notification"
     private let settings: AppSettings
     private let diagnosticsLog: DiagnosticsLog
 
@@ -2282,37 +2418,55 @@ final class AlertNotifier {
     }
 
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [diagnosticsLog] granted, error in
             if let error {
+                diagnosticsLog.add("Notification authorization failed: \(error.localizedDescription)")
                 NSLog("Notification authorization failed: \(error.localizedDescription)")
             }
-            if !granted {
+            if granted {
+                diagnosticsLog.add("Notification authorization granted.")
+            } else {
+                diagnosticsLog.add("Notification authorization was not granted.")
                 NSLog("Notification authorization was not granted.")
             }
         }
     }
 
-    func alert(title: String, body: String) {
-        if settings.soundEnabled {
-            NSSound(named: "Basso")?.play()
+    func send(_ event: NotificationEvent) {
+        guard settings.localNotificationsEnabled else {
+            diagnosticsLog.add("Mac notification skipped: local notifications disabled.")
+            return
         }
 
-        guard settings.localNotificationsEnabled else { return }
-
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
+        content.title = event.title
+        content.body = event.message
         content.sound = .default
 
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
+        UNUserNotificationCenter.current().add(request) { [diagnosticsLog] error in
             if let error {
+                diagnosticsLog.add("Mac notification failed: \(error.localizedDescription)")
                 NSLog("Notification delivery failed: \(error.localizedDescription)")
+            } else {
+                diagnosticsLog.add("Mac notification delivered: \(event.title).")
             }
         }
     }
+}
 
-    func sendWebhookIfConfigured(title: String, message: String) {
+final class WebhookNotificationProvider: NotificationProvider, @unchecked Sendable {
+    let name = "Webhook"
+    private let settings: AppSettings
+    private let diagnosticsLog: DiagnosticsLog
+    private let retryDelays: [TimeInterval] = [0, 2, 5]
+
+    init(settings: AppSettings, diagnosticsLog: DiagnosticsLog) {
+        self.settings = settings
+        self.diagnosticsLog = diagnosticsLog
+    }
+
+    func send(_ event: NotificationEvent) {
         guard settings.webhookNotificationsEnabled else {
             diagnosticsLog.add("Webhook skipped: webhook notifications disabled.")
             return
@@ -2321,29 +2475,94 @@ final class AlertNotifier {
             diagnosticsLog.add("Webhook skipped: no webhook URL configured.")
             return
         }
+        send(event, to: webhookURL, attempt: 1)
+    }
 
+    private func send(_ event: NotificationEvent, to webhookURL: URL, attempt: Int) {
         var request = URLRequest(url: webhookURL)
         request.httpMethod = "POST"
+        request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "title": title,
-            "message": message,
-            "source": Host.current().localizedName ?? "Mac"
+            "title": event.title,
+            "message": event.message,
+            "source": event.source
         ])
 
-        diagnosticsLog.add("Webhook sending: \(title).")
+        diagnosticsLog.add("Webhook attempt \(attempt)/\(retryDelays.count): \(event.title).")
         URLSession.shared.dataTask(with: request) { [diagnosticsLog] _, response, error in
             if let error {
-                diagnosticsLog.add("Webhook failed: \(error.localizedDescription)")
-                NSLog("Webhook alert failed: \(error.localizedDescription)")
+                diagnosticsLog.add("Webhook attempt \(attempt) failed: \(error.localizedDescription)")
+                self.retryIfPossible(event, webhookURL: webhookURL, attempt: attempt)
                 return
             }
-            if let httpResponse = response as? HTTPURLResponse {
-                diagnosticsLog.add("Webhook completed with HTTP \(httpResponse.statusCode).")
-            } else {
-                diagnosticsLog.add("Webhook completed.")
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                diagnosticsLog.add("Webhook attempt \(attempt) completed without HTTP status.")
+                return
+            }
+
+            if (200...299).contains(httpResponse.statusCode) {
+                diagnosticsLog.add("Webhook delivered with HTTP \(httpResponse.statusCode).")
+                return
+            }
+
+            diagnosticsLog.add("Webhook attempt \(attempt) returned HTTP \(httpResponse.statusCode).")
+            if httpResponse.statusCode == 429 || httpResponse.statusCode >= 500 {
+                self.retryIfPossible(event, webhookURL: webhookURL, attempt: attempt)
             }
         }.resume()
+    }
+
+    private func retryIfPossible(_ event: NotificationEvent, webhookURL: URL, attempt: Int) {
+        guard attempt < retryDelays.count else {
+            diagnosticsLog.add("Webhook failed after \(attempt) attempts.")
+            return
+        }
+        let nextAttempt = attempt + 1
+        let delay = retryDelays[attempt]
+        diagnosticsLog.add("Webhook retry \(nextAttempt) scheduled in \(Int(delay))s.")
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.send(event, to: webhookURL, attempt: nextAttempt)
+        }
+    }
+}
+
+final class AlertNotifier {
+    private let soundProvider: SoundNotificationProvider
+    private let localProvider: LocalNotificationProvider
+    private let webhookProvider: WebhookNotificationProvider
+
+    init(settings: AppSettings, diagnosticsLog: DiagnosticsLog) {
+        soundProvider = SoundNotificationProvider(settings: settings, diagnosticsLog: diagnosticsLog)
+        localProvider = LocalNotificationProvider(settings: settings, diagnosticsLog: diagnosticsLog)
+        webhookProvider = WebhookNotificationProvider(settings: settings, diagnosticsLog: diagnosticsLog)
+    }
+
+    func requestAuthorization() {
+        localProvider.requestAuthorization()
+    }
+
+    func alert(title: String, body: String) {
+        let event = NotificationEvent(title: title, message: body, source: Host.current().localizedName ?? "Mac")
+        soundProvider.send(event)
+        localProvider.send(event)
+    }
+
+    func sendWebhookIfConfigured(title: String, message: String) {
+        webhookProvider.send(NotificationEvent(title: title, message: message, source: Host.current().localizedName ?? "Mac"))
+    }
+
+    func testSound() {
+        soundProvider.send(NotificationEvent(title: "Sound test", message: "Testing alert sound.", source: Host.current().localizedName ?? "Mac"))
+    }
+
+    func testLocalNotification() {
+        localProvider.send(NotificationEvent(title: "MagSafe Watch notification test", message: "Mac notifications are working.", source: Host.current().localizedName ?? "Mac"))
+    }
+
+    func testWebhook() {
+        webhookProvider.send(NotificationEvent(title: "MagSafe Watch webhook test", message: "Webhook delivery is working.", source: Host.current().localizedName ?? "Mac"))
     }
 }
 
@@ -2359,6 +2578,7 @@ final class AppSettings {
     var soundEnabled: Bool
     var webhookNotificationsEnabled: Bool
     var autoUpdateChecksEnabled: Bool
+    var launchAtLoginEnabled: Bool
     var showAllSnoozeOptions: Bool
     var defaultSnoozeKind: SnoozeKind
     var defaultSnoozeMinutes: Int
@@ -2420,6 +2640,7 @@ final class AppSettings {
               "soundEnabled": true,
               "webhookNotificationsEnabled": false,
               "autoUpdateChecksEnabled": true,
+              "launchAtLoginEnabled": false,
               "showAllSnoozeOptions": true,
               "defaultSnoozeKind": "time",
               "defaultSnoozeMinutes": 5,
@@ -2454,6 +2675,7 @@ final class AppSettings {
         soundEnabled = object["soundEnabled"] as? Bool ?? true
         webhookNotificationsEnabled = object["webhookNotificationsEnabled"] as? Bool ?? false
         autoUpdateChecksEnabled = object["autoUpdateChecksEnabled"] as? Bool ?? true
+        launchAtLoginEnabled = object["launchAtLoginEnabled"] as? Bool ?? false
         showAllSnoozeOptions = object["showAllSnoozeOptions"] as? Bool ?? true
         defaultSnoozeKind = SnoozeKind(rawValue: object["defaultSnoozeKind"] as? String ?? "") ?? .time
         defaultSnoozeMinutes = max(object["defaultSnoozeMinutes"] as? Int ?? 5, 1)
@@ -2491,6 +2713,7 @@ final class AppSettings {
             "soundEnabled": soundEnabled,
             "webhookNotificationsEnabled": webhookNotificationsEnabled,
             "autoUpdateChecksEnabled": autoUpdateChecksEnabled,
+            "launchAtLoginEnabled": launchAtLoginEnabled,
             "showAllSnoozeOptions": showAllSnoozeOptions,
             "defaultSnoozeKind": defaultSnoozeKind.rawValue,
             "defaultSnoozeMinutes": defaultSnoozeMinutes,

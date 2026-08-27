@@ -88,6 +88,8 @@ Presentation settings:
 
 - Show MagSafe Watch in the menu bar: enables the menu-bar item for menu-bar app use
 - Show MagSafe Watch in the Dock: controls whether the app also appears as a normal Dock app
+- Launch MagSafe Watch when I log in: registers or unregisters the app with
+  macOS Login Items
 
 At least one of these remains enabled so the app is not left running with no
 visible way to reopen it.
@@ -106,9 +108,8 @@ activity as a desk-use signal. The app's Permissions tab includes buttons to:
 
 To start it automatically at login:
 
-```bash
-./scripts/install_login_item.sh
-```
+Open `Settings` and enable `Launch MagSafe Watch when I log in`. The legacy
+`scripts/install_login_item.sh` helper is still available for local testing.
 
 ## Concept And Settings
 
@@ -134,6 +135,7 @@ Example:
   "soundEnabled": true,
   "webhookNotificationsEnabled": false,
   "autoUpdateChecksEnabled": true,
+  "launchAtLoginEnabled": false,
   "stationaryIdleThresholdSeconds": 90,
   "motionSampleWindowSeconds": 10,
   "inputActivityWindowSeconds": 15,
@@ -163,6 +165,10 @@ Pushover, ntfy, IFTTT, Home Assistant, or your own endpoint. The app sends:
 }
 ```
 
+Webhook delivery retries transient failures. Network errors, HTTP 429, and HTTP
+5xx responses are retried with short backoff, and the Status page diagnostics
+show each attempt and final HTTP status.
+
 ## Update Checks
 
 MagSafe Watch can automatically check a GitHub Releases feed on launch and then
@@ -176,7 +182,8 @@ https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
 The app compares the release `tag_name`, such as `v0.2.0`, with its bundle
 version. If a newer release exists, it notifies you and the manual Check for
 Updates button opens the GitHub release page. It does not silently replace the
-running app.
+running app. After any successful update check, the Status page can also open
+the latest GitHub release page directly.
 
 ## iPhone and Apple Watch alerts
 

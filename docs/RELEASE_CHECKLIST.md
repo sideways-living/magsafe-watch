@@ -40,8 +40,12 @@ Also verify:
 - Menu bar icon appears.
 - Settings window opens from the menu.
 - Local test alert works after notification permission is granted.
+- Provider-specific test buttons work for sound, local Mac notification, and
+  webhook if configured.
 - Unplug warning appears after the configured delay when the Mac is stationary.
 - Status page diagnostics record alert decisions and webhook outcomes.
+- Status page `Open Latest Release` becomes available after a successful update
+  check against a configured GitHub Releases feed.
 
 ## GitHub Release
 
