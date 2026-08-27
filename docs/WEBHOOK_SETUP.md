@@ -15,6 +15,10 @@ The app posts this payload:
 
 ## Configure MagSafe Watch
 
+Recommended low-effort choice: `ntfy` if you want the quickest working phone
+alert, or `Pushover` if you want a more polished iPhone and Apple Watch
+notification app.
+
 1. Open MagSafe Watch.
 2. Open `Notifications`.
 3. Enable `Send webhook push notifications for iPhone or Apple Watch`.

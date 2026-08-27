@@ -203,6 +203,7 @@ helper app direction.
 
 More setup and maintenance docs:
 
+- [Real-device test plan](docs/REAL_DEVICE_TEST_PLAN.md)
 - [Webhook setup guide](docs/WEBHOOK_SETUP.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

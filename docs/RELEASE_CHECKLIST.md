@@ -2,6 +2,13 @@
 
 Use this checklist when publishing a new MagSafe Watch build.
 
+Recommended defaults:
+
+- Repository name: `magsafe-watch`
+- Version tags: `v0.1.0`, `v0.2.0`, `v0.3.0`
+- Release asset: `MagSafe Watch Installer.pkg`
+- Current build type: unsigned local package
+
 ## Before Building
 
 - Confirm `CFBundleShortVersionString` in `scripts/build_app.sh`.
@@ -59,6 +66,13 @@ Also verify:
 
 ```text
 https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
+```
+
+If `gh` is installed and authenticated, the helper script can build, tag, push,
+and create the GitHub Release after `origin` is configured:
+
+```bash
+./scripts/create_github_release.sh v0.2.0
 ```
 
 ## Update Feed

@@ -67,3 +67,5 @@ current implementation remains clear.
 - Added `docs/RELEASE_CHECKLIST.md` for GitHub Releases and update-feed setup.
 - Added `docs/TROUBLESHOOTING.md` for notification permissions, login item setup,
   motion/input detection diagnostics, webhooks, and update checks.
+- Added `docs/REAL_DEVICE_TEST_PLAN.md` for stationary, moving, battery-bank,
+  external-input, and built-in-input validation.
