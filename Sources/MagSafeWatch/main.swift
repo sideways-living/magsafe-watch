@@ -23,7 +23,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let motionClassifier = MotionClassifier()
     private let inputMonitor = InputActivityMonitor()
     private let settings = AppSettings()
-    private lazy var notifier = AlertNotifier(settings: settings)
+    private let diagnosticsLog = DiagnosticsLog()
+    private lazy var notifier = AlertNotifier(settings: settings, diagnosticsLog: diagnosticsLog)
     private lazy var updateChecker = UpdateChecker(settings: settings)
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
@@ -171,6 +172,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard settings.monitorEnabled else { return }
 
         if state.isOnACPower {
+            diagnosticsLog.add("Power restored: \(state.sourceDescription). Clearing unplug warning state.")
             motionCheckID = UUID()
             reminderTimer?.invalidate()
             reminderTimer = nil
@@ -282,10 +284,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func classifyDisconnect(state: PowerState) {
         guard settings.motionDetectionEnabled else {
+            diagnosticsLog.add("Power lost: motion detection disabled. Falling back to idle/input checks.")
             classifyDisconnectWithIdleFallback(state: state, reason: "Motion detection is switched off.")
             return
         }
 
+        diagnosticsLog.add("Power lost: sampling motion for \(Int(settings.motionSampleWindow))s.")
         let checkID = UUID()
         motionCheckID = checkID
         statusWindowController?.update(
@@ -309,11 +313,14 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             switch result {
             case .stationary:
+                self.diagnosticsLog.add("Motion result: stationary. Sending accidental-unplug alert.")
                 self.sendAccidentalUnplugAlert(source: state.sourceDescription, reason: result.alertReason)
                 self.scheduleBatteryReminder()
             case .moving:
+                self.diagnosticsLog.add("Motion result: moving. Suppressing first alert and keeping reminders armed.")
                 self.scheduleBatteryReminder()
             case .unavailable:
+                self.diagnosticsLog.add("Motion result unavailable. Falling back to idle/input checks.")
                 self.classifyDisconnectWithIdleFallback(state: state, reason: result.alertReason)
                 self.scheduleBatteryReminder()
             }
@@ -321,14 +328,19 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func classifyDisconnectWithIdleFallback(state: PowerState, reason: String) {
-        guard settings.idleFallbackEnabled else { return }
+        guard settings.idleFallbackEnabled else {
+            diagnosticsLog.add("Idle fallback disabled. No accidental-unplug alert sent.")
+            return
+        }
         if settings.externalInputDeskSignalEnabled {
             let inputContext = inputMonitor.context(recentThreshold: settings.inputActivityWindow)
             switch inputContext {
             case .externalRecent(let age):
+                diagnosticsLog.add("External input \(Int(age.rounded()))s ago. Treating as desk use and alerting.")
                 sendAccidentalUnplugAlert(source: state.sourceDescription, reason: reason + " External keyboard or mouse activity was detected \(Int(age.rounded()))s ago, so the Mac appears active at the desk.")
                 return
             case .builtInRecent:
+                diagnosticsLog.add("Built-in input was recent. Treating unplug as likely intentional laptop use.")
                 return
             case .idle:
                 break
@@ -336,13 +348,21 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let idleSeconds = UserActivity.idleSeconds
-        guard idleSeconds >= settings.stationaryIdleThreshold else { return }
+        guard idleSeconds >= settings.stationaryIdleThreshold else {
+            diagnosticsLog.add("Idle fallback waited: \(Int(idleSeconds.rounded()))s idle is below \(Int(settings.stationaryIdleThreshold))s threshold.")
+            return
+        }
+        diagnosticsLog.add("Idle fallback threshold met at \(Int(idleSeconds.rounded()))s. Sending alert.")
         sendAccidentalUnplugAlert(source: state.sourceDescription, reason: reason + " Idle fallback: \(Int(idleSeconds.rounded()))s.")
     }
 
     private func sendAccidentalUnplugAlert(source: String, reason: String) {
-        guard !accidentalDisconnectAlerted else { return }
+        guard !accidentalDisconnectAlerted else {
+            diagnosticsLog.add("Accidental-unplug alert already sent for this disconnect; suppressing duplicate.")
+            return
+        }
         accidentalDisconnectAlerted = true
+        diagnosticsLog.add("Sending accidental-unplug alert: \(reason)")
 
         notifier.alert(
             title: "MacBook is running on battery",
@@ -366,6 +386,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let warningID = UUID()
         fullScreenWarningID = warningID
         fullScreenWarningTimer?.invalidate()
+        diagnosticsLog.add("Scheduling full-screen warning in \(Int(delay))s.")
         fullScreenWarningTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self,
@@ -378,6 +399,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func showFullScreenWarning(reason: String) {
         guard settings.monitorEnabled, !latestState.isOnACPower else { return }
+        diagnosticsLog.add("Showing full-screen warning.")
         if fullScreenWarningController == nil {
             fullScreenWarningController = FullScreenWarningWindowController(settings: settings) { [weak self] snooze in
                 self?.handleFullScreenSnooze(snooze)
@@ -400,6 +422,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         switch snooze {
         case .minutes(let minutes):
+            diagnosticsLog.add("Full-screen warning snoozed for \(minutes) minutes.")
             let warningID = UUID()
             fullScreenWarningID = warningID
             fullScreenSnoozedUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
@@ -413,6 +436,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         case .batteryThreshold(let threshold):
+            diagnosticsLog.add("Full-screen warning snoozed until battery reaches \(threshold)%.")
             fullScreenSnoozeBatteryThreshold = threshold
             showBatteryThresholdWarningIfNeeded(state: latestState)
         }
@@ -425,6 +449,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
               batteryPercent <= threshold else { return }
 
         fullScreenSnoozeBatteryThreshold = nil
+        diagnosticsLog.add("Battery threshold snooze reached at \(batteryPercent)%. Showing warning.")
         showFullScreenWarning(reason: "Battery has depleted to \(batteryPercent)%.")
     }
 
@@ -439,8 +464,12 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func scheduleBatteryReminder() {
-        guard settings.repeatRemindersEnabled else { return }
+        guard settings.repeatRemindersEnabled else {
+            diagnosticsLog.add("Repeat reminders disabled.")
+            return
+        }
         reminderTimer?.invalidate()
+        diagnosticsLog.add("Scheduling repeat reminders every \(Int(settings.repeatAlertInterval))s.")
         reminderTimer = Timer.scheduledTimer(
             timeInterval: settings.repeatAlertInterval,
             target: self,
@@ -476,6 +505,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             switch result {
             case .stationary:
+                self.diagnosticsLog.add("Reminder check: stationary. Sending still-on-battery reminder.")
                 self.notifier.alert(
                     title: "Still on battery",
                     body: "The MacBook is still unplugged and motionless."
@@ -485,18 +515,24 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     message: "The MacBook is still unplugged and motionless."
                 )
             case .moving:
+                self.diagnosticsLog.add("Reminder check: moving. Reminder suppressed.")
                 break
             case .unavailable:
+                self.diagnosticsLog.add("Reminder check: motion unavailable. Using idle fallback.")
                 self.sendIdleFallbackReminder()
             }
         }
     }
 
     private func sendIdleFallbackReminder() {
-        guard settings.idleFallbackEnabled else { return }
+        guard settings.idleFallbackEnabled else {
+            diagnosticsLog.add("Reminder skipped: idle fallback disabled.")
+            return
+        }
         if settings.externalInputDeskSignalEnabled {
             switch inputMonitor.context(recentThreshold: settings.inputActivityWindow) {
             case .externalRecent:
+                diagnosticsLog.add("Reminder sent: external input indicates desk use.")
                 notifier.alert(
                     title: "Still on battery",
                     body: "The MacBook is still unplugged while external keyboard or mouse input suggests desk use."
@@ -507,13 +543,18 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
                 return
             case .builtInRecent:
+                diagnosticsLog.add("Reminder skipped: built-in input suggests active laptop use.")
                 return
             case .idle:
                 break
             }
         }
 
-        guard UserActivity.idleSeconds >= settings.stationaryIdleThreshold else { return }
+        guard UserActivity.idleSeconds >= settings.stationaryIdleThreshold else {
+            diagnosticsLog.add("Reminder skipped: idle time below threshold.")
+            return
+        }
+        diagnosticsLog.add("Reminder sent: idle fallback threshold met.")
         notifier.alert(
             title: "Still on battery",
             body: "Motion detection is unavailable or switched off, and the Mac has been idle."
@@ -538,7 +579,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 updateScheduleChangedHandler: { [weak self] in self?.scheduleUpdateChecks() },
                 monitorChangedHandler: { [weak self] in self?.handleMonitoringSettingChanged() },
                 presentationChangedHandler: { [weak self] in self?.applyPresentationSettings() },
-                openConfigHandler: { [weak self] in self?.openConfigFile() }
+                openConfigHandler: { [weak self] in self?.openConfigFile() },
+                diagnosticsProvider: { [weak self] in self?.diagnosticsLog.summary() ?? "No diagnostics recorded yet." }
             )
         }
 
@@ -1239,17 +1281,19 @@ final class StatusWindowController: NSWindowController {
     private let monitorChangedHandler: () -> Void
     private let presentationChangedHandler: () -> Void
     private let openConfigHandler: () -> Void
+    private let diagnosticsProvider: () -> String
     private let powerValue = NSTextField(labelWithString: "Checking...")
     private let idleValue = NSTextField(labelWithString: "Checking...")
     private let motionValue = NSTextField(labelWithString: "Checking...")
     private let inputValue = NSTextField(labelWithString: "Checking...")
     private let updateValue = NSTextField(labelWithString: "Not checked")
+    private let diagnosticsValue = NSTextField(wrappingLabelWithString: "No diagnostics recorded yet.")
     private let defaultSnoozeKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let defaultSnoozeValueField = NSTextField()
     private let pageTabs = NSSegmentedControl(labels: ["Intro", "Settings", "Notifications", "Permissions", "Status"], trackingMode: .selectOne, target: nil, action: nil)
     private let pageContainer = NSView()
 
-    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, presentationChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void) {
+    init(settings: AppSettings, testAlertHandler: @escaping () -> Void, notificationPermissionHandler: @escaping () -> Void, checkForUpdatesHandler: @escaping () -> Void, updateScheduleChangedHandler: @escaping () -> Void, monitorChangedHandler: @escaping () -> Void, presentationChangedHandler: @escaping () -> Void, openConfigHandler: @escaping () -> Void, diagnosticsProvider: @escaping () -> String) {
         self.settings = settings
         self.testAlertHandler = testAlertHandler
         self.notificationPermissionHandler = notificationPermissionHandler
@@ -1258,9 +1302,10 @@ final class StatusWindowController: NSWindowController {
         self.monitorChangedHandler = monitorChangedHandler
         self.presentationChangedHandler = presentationChangedHandler
         self.openConfigHandler = openConfigHandler
+        self.diagnosticsProvider = diagnosticsProvider
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -1280,6 +1325,7 @@ final class StatusWindowController: NSWindowController {
         idleValue.stringValue = "\(Int(idleSeconds.rounded()))s idle"
         motionValue.stringValue = motionStatus
         inputValue.stringValue = inputStatus
+        diagnosticsValue.stringValue = diagnosticsProvider()
     }
 
     func showSettingsPage() {
@@ -1500,13 +1546,19 @@ final class StatusWindowController: NSWindowController {
         let motionLabel = label("Motion")
         let inputLabel = label("Input")
         let updateLabel = label("Updates")
+        let diagnosticsLabel = label("Diagnostics")
+        diagnosticsValue.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        diagnosticsValue.textColor = .secondaryLabelColor
+        diagnosticsValue.maximumNumberOfLines = 8
+        diagnosticsValue.widthAnchor.constraint(lessThanOrEqualToConstant: 520).isActive = true
 
         let grid = NSGridView(views: [
             [powerLabel, powerValue],
             [idleLabel, idleValue],
             [motionLabel, motionValue],
             [inputLabel, inputValue],
-            [updateLabel, updateValue]
+            [updateLabel, updateValue],
+            [diagnosticsLabel, diagnosticsValue]
         ])
         grid.rowSpacing = 8
         grid.columnSpacing = 18
@@ -1882,6 +1934,35 @@ final class MotionClassifier {
     }
 }
 
+final class DiagnosticsLog: @unchecked Sendable {
+    private let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+    private let lock = NSLock()
+    private var entries: [String] = []
+    private let limit = 60
+
+    func add(_ message: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let entry = "\(formatter.string(from: Date())) \(message)"
+        entries.append(entry)
+        if entries.count > limit {
+            entries.removeFirst(entries.count - limit)
+        }
+        NSLog("MagSafe Watch diagnostic: \(message)")
+    }
+
+    func summary(maxLines: Int = 8) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !entries.isEmpty else { return "No diagnostics recorded yet." }
+        return entries.suffix(maxLines).joined(separator: "\n")
+    }
+}
+
 final class PowerMonitor {
     var onChange: ((PowerState) -> Void)?
 
@@ -2193,9 +2274,11 @@ private struct Version: Comparable, CustomStringConvertible {
 
 final class AlertNotifier {
     private let settings: AppSettings
+    private let diagnosticsLog: DiagnosticsLog
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, diagnosticsLog: DiagnosticsLog) {
         self.settings = settings
+        self.diagnosticsLog = diagnosticsLog
     }
 
     func requestAuthorization() {
@@ -2230,8 +2313,14 @@ final class AlertNotifier {
     }
 
     func sendWebhookIfConfigured(title: String, message: String) {
-        guard settings.webhookNotificationsEnabled else { return }
-        guard let webhookURL = settings.webhookURL else { return }
+        guard settings.webhookNotificationsEnabled else {
+            diagnosticsLog.add("Webhook skipped: webhook notifications disabled.")
+            return
+        }
+        guard let webhookURL = settings.webhookURL else {
+            diagnosticsLog.add("Webhook skipped: no webhook URL configured.")
+            return
+        }
 
         var request = URLRequest(url: webhookURL)
         request.httpMethod = "POST"
@@ -2242,9 +2331,17 @@ final class AlertNotifier {
             "source": Host.current().localizedName ?? "Mac"
         ])
 
-        URLSession.shared.dataTask(with: request) { _, _, error in
+        diagnosticsLog.add("Webhook sending: \(title).")
+        URLSession.shared.dataTask(with: request) { [diagnosticsLog] _, response, error in
             if let error {
+                diagnosticsLog.add("Webhook failed: \(error.localizedDescription)")
                 NSLog("Webhook alert failed: \(error.localizedDescription)")
+                return
+            }
+            if let httpResponse = response as? HTTPURLResponse {
+                diagnosticsLog.add("Webhook completed with HTTP \(httpResponse.statusCode).")
+            } else {
+                diagnosticsLog.add("Webhook completed.")
             }
         }.resume()
     }

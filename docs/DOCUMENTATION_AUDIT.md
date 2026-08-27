@@ -60,10 +60,10 @@ current implementation remains clear.
 - Update checks require a real GitHub repository with releases before they can be
   fully exercised end to end.
 
-## Recommended Next Documentation Work
+## Completed Follow-Up Documentation Work
 
-- Add screenshots once the UI stabilizes.
-- Add a setup guide for webhook providers.
-- Add a release checklist before publishing GitHub Releases.
-- Add a troubleshooting page for notification permissions, login item setup, and
-  motion/input detection diagnostics.
+- Added screenshots to `README.md` using tracked files in `docs/screenshots/`.
+- Added `docs/WEBHOOK_SETUP.md` for Pushover, ntfy, IFTTT, and Home Assistant.
+- Added `docs/RELEASE_CHECKLIST.md` for GitHub Releases and update-feed setup.
+- Added `docs/TROUBLESHOOTING.md` for notification permissions, login item setup,
+  motion/input detection diagnostics, webhooks, and update checks.

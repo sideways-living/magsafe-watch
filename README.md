@@ -47,6 +47,20 @@ The installer is written to:
 outputs/MagSafe Watch Installer.pkg
 ```
 
+## Screenshots
+
+Current app window:
+
+![MagSafe Watch app window](docs/screenshots/app-window.png)
+
+Menu bar mode:
+
+![MagSafe Watch menu bar](docs/screenshots/menu-bar.png)
+
+Unplug warning:
+
+![MagSafe Watch unplug warning](docs/screenshots/unplug-warning.svg)
+
 ## Run
 
 Open the app bundle. An introduction window appears, and macOS will ask for
@@ -58,7 +72,8 @@ The window has separate pages:
 - Settings: switches for monitoring, motion detection, idle fallback, external input detection, and repeat reminders
 - Notifications: switches for macOS banners, alert sound, and webhook push alerts
 - Permissions: guided buttons that request notification permission and open the relevant macOS System Settings panes
-- Status: current power source, idle time, latest motion result, input source, and update status
+- Status: current power source, idle time, latest motion result, input source,
+  update status, and recent diagnostics
 
 You can close the window after launch. The menu-bar bolt icon keeps running and
 has:
@@ -178,6 +193,12 @@ Apple Developer account or backend.
 
 See [ROADMAP.md](ROADMAP.md) for the planned native iPhone and Apple Watch
 helper app direction.
+
+More setup and maintenance docs:
+
+- [Webhook setup guide](docs/WEBHOOK_SETUP.md)
+- [Release checklist](docs/RELEASE_CHECKLIST.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 The latest concept-documentation audit is in
 [docs/DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md).
