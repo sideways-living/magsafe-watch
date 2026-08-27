@@ -1101,48 +1101,40 @@ final class ClockFaceView: NSView {
         let diameter = min(bounds.width, bounds.height) - 8
         let rect = NSRect(x: (bounds.width - diameter) / 2, y: (bounds.height - diameter) / 2, width: diameter, height: diameter)
         let center = NSPoint(x: rect.midX, y: rect.midY)
+        let radius = diameter / 2
 
         NSColor.white.withAlphaComponent(0.18).setFill()
         NSBezierPath(ovalIn: rect).fill()
+
+        if let minutes, minutes > 0 {
+            let endAngle = 90.0 - (Double(minutes % 60) / 60.0 * 360.0)
+            let segment = NSBezierPath()
+            segment.move(to: center)
+            segment.line(to: point(from: center, radius: radius - 2, degrees: 90))
+            segment.appendArc(withCenter: center, radius: radius - 2, startAngle: 90, endAngle: endAngle, clockwise: true)
+            segment.close()
+            NSColor.controlAccentColor.withAlphaComponent(0.34).setFill()
+            segment.fill()
+        }
+
         NSColor.labelColor.withAlphaComponent(0.8).setStroke()
         let outline = NSBezierPath(ovalIn: rect)
         outline.lineWidth = 2
         outline.stroke()
 
-        for tick in 0..<12 {
-            let angle = (Double(tick) / 12.0 * Double.pi * 2.0) - Double.pi / 2.0
-            let outer = point(from: center, radius: diameter / 2 - 5, angle: angle)
-            let inner = point(from: center, radius: diameter / 2 - (tick % 3 == 0 ? 12 : 9), angle: angle)
-            let path = NSBezierPath()
-            path.move(to: outer)
-            path.line(to: inner)
-            path.lineWidth = tick % 3 == 0 ? 2 : 1
-            NSColor.labelColor.withAlphaComponent(tick % 3 == 0 ? 0.65 : 0.35).setStroke()
-            path.stroke()
+        for degrees in stride(from: 90.0, through: -180.0, by: -90.0) {
+            let marker = point(from: center, radius: radius - 7, degrees: degrees)
+            NSColor.labelColor.withAlphaComponent(0.62).setFill()
+            NSBezierPath(ovalIn: NSRect(x: marker.x - 2, y: marker.y - 2, width: 4, height: 4)).fill()
         }
 
-        guard let minutes, minutes > 0 else { return }
-        let minuteAngle = (Double(minutes % 60) / 60.0 * Double.pi * 2.0) - Double.pi / 2.0
-        let hourAngle = -Double.pi / 2.0
-
-        drawHand(from: center, radius: diameter * 0.25, angle: hourAngle, width: 4, color: .labelColor)
-        drawHand(from: center, radius: diameter * 0.38, angle: minuteAngle, width: 3, color: .controlAccentColor)
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(ovalIn: NSRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8)).fill()
+        NSColor.labelColor.withAlphaComponent(0.78).setFill()
+        NSBezierPath(ovalIn: NSRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)).fill()
     }
 
-    private func point(from center: NSPoint, radius: CGFloat, angle: Double) -> NSPoint {
-        NSPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-    }
-
-    private func drawHand(from center: NSPoint, radius: CGFloat, angle: Double, width: CGFloat, color: NSColor) {
-        let path = NSBezierPath()
-        path.move(to: center)
-        path.line(to: point(from: center, radius: radius, angle: angle))
-        path.lineWidth = width
-        path.lineCapStyle = .round
-        color.setStroke()
-        path.stroke()
+    private func point(from center: NSPoint, radius: CGFloat, degrees: Double) -> NSPoint {
+        let radians = degrees * Double.pi / 180.0
+        return NSPoint(x: center.x + cos(radians) * radius, y: center.y + sin(radians) * radius)
     }
 }
 
