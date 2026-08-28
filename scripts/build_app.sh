@@ -25,6 +25,8 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/MagSafeWatch" "$MACOS_DIR/MagSafe Watch"
 swift "$ROOT_DIR/scripts/generate_icon.swift" "$ROOT_DIR/Assets/MagSafeWatchLogo.svg" "$RESOURCES_DIR"
 cp "$ROOT_DIR/Assets/MagSafeWatchAppIcon.icns" "$RESOURCES_DIR/MagSafeWatch.icns"
+cp "$ROOT_DIR/Assets/AppIcons/macos/AppIcon512.png" "$RESOURCES_DIR/MagSafeWatchBrand.png"
+cp -R "$ROOT_DIR/Assets/AppIcons" "$RESOURCES_DIR/AppIcons"
 cp "$ROOT_DIR"/Assets/MenuBarIcons/*.png "$RESOURCES_DIR"/
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
@@ -60,11 +62,8 @@ PLIST
 
 xattr -cr "$APP_DIR"
 xattr -c "$APP_DIR" >/dev/null 2>&1 || true
+xattr -wx com.apple.FinderInfo 0000000000000000000000000000000000000000000000000000000000000000 "$APP_DIR" >/dev/null 2>&1 || true
 xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
-xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1 || true
 codesign --force --deep --sign - "$APP_DIR" >/dev/null
-xattr -cr "$APP_DIR" >/dev/null 2>&1 || true
-xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
-xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1 || true
 
 echo "$APP_DIR"

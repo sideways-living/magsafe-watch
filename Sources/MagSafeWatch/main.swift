@@ -45,6 +45,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var motionCheckID = UUID()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureApplicationIcon()
         configureMainMenu()
         applyPresentationSettings()
         showStatusWindow()
@@ -59,6 +60,13 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         inputMonitor.start()
         applyLaunchAtLoginSetting()
         scheduleUpdateChecks()
+    }
+
+    private func configureApplicationIcon() {
+        guard let image = NSImage(named: "MagSafeWatchBrand") ?? NSImage(named: "MagSafeWatch") else {
+            return
+        }
+        NSApp.applicationIconImage = image
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1423,6 +1431,8 @@ final class StatusWindowController: NSWindowController {
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
+        let brandHeader = buildBrandHeader()
+
         pageTabs.selectedSegment = 0
         pageTabs.target = self
         pageTabs.action = #selector(changePage)
@@ -1431,13 +1441,17 @@ final class StatusWindowController: NSWindowController {
 
         pageContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        content.addSubview(brandHeader)
         content.addSubview(pageTabs)
         content.addSubview(pageContainer)
 
         NSLayoutConstraint.activate([
+            brandHeader.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            brandHeader.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
+            brandHeader.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             pageTabs.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
             pageTabs.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
-            pageTabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            pageTabs.topAnchor.constraint(equalTo: brandHeader.bottomAnchor, constant: 16),
             pageContainer.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             pageContainer.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             pageContainer.topAnchor.constraint(equalTo: pageTabs.bottomAnchor, constant: 18),
@@ -1446,6 +1460,39 @@ final class StatusWindowController: NSWindowController {
 
         selectPage(0)
         return content
+    }
+
+    private func buildBrandHeader() -> NSView {
+        let imageView = NSImageView()
+        imageView.image = NSImage(named: "MagSafeWatchBrand") ?? NSApp.applicationIconImage
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "MagSafe Watch")
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+        title.textColor = .labelColor
+
+        let subtitle = NSTextField(labelWithString: "Power cable monitoring")
+        subtitle.font = .systemFont(ofSize: 12, weight: .medium)
+        subtitle.textColor = .secondaryLabelColor
+
+        let textStack = NSStackView(views: [title, subtitle])
+        textStack.orientation = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .leading
+
+        let stack = NSStackView(views: [imageView, textStack])
+        stack.orientation = .horizontal
+        stack.spacing = 10
+        stack.alignment = .centerY
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            imageView.widthAnchor.constraint(equalToConstant: 42),
+            imageView.heightAnchor.constraint(equalToConstant: 42)
+        ])
+
+        return stack
     }
 
     @objc private func changePage() {
