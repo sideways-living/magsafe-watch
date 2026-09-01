@@ -112,8 +112,8 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = " MagSafe"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.button?.title = ""
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.setAccessibilityLabel("MagSafe Watch")
 
