@@ -205,7 +205,7 @@ final class MagSafeWatchApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func menuBarImage(for state: PowerState) -> NSImage? {
         let imageName = menuBarImageName(isCharging: state.isOnACPower, batteryPercent: state.batteryPercent)
         let image = NSImage(named: imageName) ?? NSImage(named: "MagSafeWatchMenuBar") ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "MagSafe Watch")
-        image?.isTemplate = false
+        image?.isTemplate = true
         image?.size = NSSize(width: 18, height: 18)
         return image
     }

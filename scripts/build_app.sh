@@ -60,10 +60,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-xattr -cr "$APP_DIR"
-xattr -c "$APP_DIR" >/dev/null 2>&1 || true
-xattr -wx com.apple.FinderInfo 0000000000000000000000000000000000000000000000000000000000000000 "$APP_DIR" >/dev/null 2>&1 || true
-xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
+for _ in {1..10}; do
+  xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
+  if ! xattr -p com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
 codesign --force --deep --sign - "$APP_DIR" >/dev/null
 
 echo "$APP_DIR"
