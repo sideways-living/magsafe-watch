@@ -15,7 +15,6 @@ export COPYFILE_DISABLE=1
 rm -rf "$PKG_DIR" "$PKG_PATH"
 mkdir -p "$STAGING_DIR/Applications"
 ditto --norsrc --noextattr "$APP_DIR" "$STAGING_DIR/Applications/MagSafe Watch.app"
-find "$STAGING_DIR" \( -name '._*' -o -name '.__*' -o -name '.DS_Store' \) -delete
 
 pkgbuild \
   --root "$STAGING_DIR" \
