@@ -1,6 +1,11 @@
 // swift-tools-version: 6.0
 
 import PackageDescription
+import Foundation
+
+let duplicateSourceExclusions = FileManager.default.fileExists(
+    atPath: "Sources/MagSafeWatch/main 2.swift"
+) ? ["main 2.swift"] : []
 
 let package = Package(
     name: "MagSafeWatch",
@@ -19,7 +24,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle")
             ],
-            exclude: ["main 2.swift"],
+            exclude: duplicateSourceExclusions,
             sources: ["main.swift"],
             linkerSettings: [
                 .unsafeFlags([

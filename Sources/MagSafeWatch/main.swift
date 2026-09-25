@@ -1974,7 +1974,7 @@ final class MotionClassifier {
             usage == kHIDUsage_Snsr_Motion_Accelerometer1D ||
             usage == kHIDUsage_Snsr_Motion_Accelerometer2D ||
             usage == kHIDUsage_Snsr_Motion_Accelerometer3D ||
-            usage == kHIDUsage_Snsr_Motion_LinearAccelerometer
+            usage == 0x7C // Linear accelerometer; the named SDK constant is newer than macOS 14.
 
         guard usageIsRelevant else { return }
         samples.append(IOHIDValueGetScaledValue(value, IOHIDValueScaleType(kIOHIDValueScaleTypePhysical)))
