@@ -142,7 +142,6 @@ Example:
   "movementThresholdG": 0.08,
   "repeatAlertIntervalSeconds": 300,
   "updateCheckIntervalHours": 24,
-  "updateFeedURL": "",
   "webhookURL": ""
 }
 ```
@@ -169,21 +168,17 @@ Webhook delivery retries transient failures. Network errors, HTTP 429, and HTTP
 5xx responses are retried with short backoff, and the Status page diagnostics
 show each attempt and final HTTP status.
 
-## Update Checks
+## Automatic Updates
 
-MagSafe Watch can automatically check a GitHub Releases feed on launch and then
-on the configured interval. Set `updateFeedURL` after the GitHub repository has
-releases, using this format:
+MagSafe Watch uses Sparkle 2 to check, download, verify, and install updates.
+The update feed URL and EdDSA public key are baked into the app, while the
+private signing key remains in the developer Keychain. Users can enable or
+disable automatic checks in Settings and can run `Check for Updates...` from
+the app menu, menu bar menu, or Status page.
 
-```text
-https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
-```
-
-The app compares the release `tag_name`, such as `v0.2.0`, with its bundle
-version. If a newer release exists, it notifies you and the manual Check for
-Updates button opens the GitHub release page. It does not silently replace the
-running app. After any successful update check, the Status page can also open
-the latest GitHub release page directly.
+Release archives are protected by both Sparkle's EdDSA signature and Apple's
+Developer ID signature. Production releases should also be notarized before
+they are added to `appcast.xml`.
 
 ## iPhone and Apple Watch alerts
 

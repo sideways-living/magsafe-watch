@@ -95,11 +95,14 @@ manually.
 
 ## Update Checks
 
-Update checks only work after a GitHub Release exists and `updateFeedURL` points
-to:
+Updates are handled by Sparkle using the feed baked into the app:
 
 ```text
-https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
+https://raw.githubusercontent.com/sideways-living/magsafe-watch/main/appcast.xml
 ```
 
-Use `Status` > `Check for Updates` to test manually.
+Use `Check for Updates...` in the app menu, menu bar menu, or Status page to
+test manually. If it fails, confirm the feed is reachable, the release archive
+URL returns HTTP 200, and Console contains no Sparkle signature or version
+errors. Sparkle will reject an archive whose EdDSA signature does not match the
+public key embedded in the app.

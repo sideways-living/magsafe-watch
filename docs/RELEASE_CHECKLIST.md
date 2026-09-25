@@ -1,96 +1,61 @@
 # Release Checklist
 
-Use this checklist when publishing a new MagSafe Watch build.
+MagSafe Watch uses Sparkle 2 for in-app updates and a signed installer package
+for first installation.
 
-Recommended defaults:
+## One-time setup
 
-- Repository name: `magsafe-watch`
-- Version tags: `v0.1.0`, `v0.2.0`, `v0.3.0`
-- Release asset: `MagSafe Watch Installer.pkg`
-- Current build type: unsigned local package
-
-## Before Building
-
-- Confirm `CFBundleShortVersionString` in `scripts/build_app.sh`.
-- Confirm `VERSION` in `scripts/build_installer.sh`.
-- Run `git status --short` and make sure only intended files are changed.
-- Review `README.md`, `ROADMAP.md`, and docs for version-specific notes.
-- Confirm `updateFeedURL` documentation points to the intended GitHub repository.
-
-## Build
+- Install `Developer ID Application` and `Developer ID Installer` certificates,
+  including their private keys, in the login Keychain.
+- Store App Store Connect credentials for notarization:
 
 ```bash
-swift build --scratch-path /private/tmp/magsafe-watch-debug-build
+xcrun notarytool store-credentials MagSafeWatch-notary \
+  --apple-id YOUR-APPLE-ID \
+  --team-id YOUR-TEAM-ID \
+  --password YOUR-APP-SPECIFIC-PASSWORD
+```
+
+- Keep the Sparkle private key in Keychain under account
+  `sideways-living.MagSafeWatch`. Never commit or export it into the repository.
+- Confirm `origin` points to `sideways-living/magsafe-watch`.
+
+## Prepare a release
+
+1. Update `VERSION` to the new semantic version.
+2. Add user-facing notes to `RELEASE_NOTES.md` if detailed notes are needed.
+3. Commit and test all changes. The release script requires a clean worktree.
+4. Build and verify locally:
+
+```bash
 ./scripts/build_installer.sh
-```
-
-Expected outputs:
-
-```text
-outputs/MagSafe Watch.app
-outputs/MagSafe Watch Installer.pkg
-```
-
-## Verify
-
-```bash
-codesign --verify --deep --strict "outputs/MagSafe Watch.app"
+codesign --verify --deep --strict --verbose=2 \
+  "/private/tmp/magsafe-watch-build/export/MagSafe Watch.app"
 pkgutil --check-signature "outputs/MagSafe Watch Installer.pkg"
 ```
 
-The current local package is unsigned, so `pkgutil` reports `Status: no
-signature`. That is expected until Developer ID signing is added.
+5. Check the app window, menu bar item, alert flow, and `Check for Updates...`
+   UI before publishing.
 
-Also verify:
-
-- App opens.
-- Menu bar icon appears.
-- Settings window opens from the menu.
-- Local test alert works after notification permission is granted.
-- Provider-specific test buttons work for sound, local Mac notification, and
-  webhook if configured.
-- Unplug warning appears after the configured delay when the Mac is stationary.
-- Status page diagnostics record alert decisions and webhook outcomes.
-- Status page `Open Latest Release` becomes available after a successful update
-  check against a configured GitHub Releases feed.
-
-## GitHub Release
-
-1. Commit the release changes.
-2. Tag the commit with a version such as `v0.2.0`.
-3. Create a GitHub Release from that tag.
-4. Upload `outputs/MagSafe Watch Installer.pkg`.
-5. Add release notes covering user-visible changes, known limits, and install
-   notes.
-6. Confirm the latest-release API endpoint returns the new release:
-
-```text
-https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest
-```
-
-If `gh` is installed and authenticated, the helper script can build, tag, push,
-and create the GitHub Release after `origin` is configured:
+## Publish
 
 ```bash
-./scripts/create_github_release.sh v0.2.0
+NOTARYTOOL_PROFILE=MagSafeWatch-notary \
+  ./scripts/create_github_release.sh v0.2.0
 ```
 
-## Update Feed
+The release script requires both Developer ID identities. It builds and signs
+the app and installer, notarizes them, creates a Sparkle update ZIP, signs the
+ZIP with the Keychain-held EdDSA key, updates `appcast.xml`, commits the feed,
+pushes the tag, and uploads both release assets to GitHub.
 
-After the release exists, set `updateFeedURL` in the app config:
+## Verify the published release
 
-```json
-{
-  "updateFeedURL": "https://api.github.com/repos/YOUR-USER/magsafe-watch/releases/latest"
-}
-```
+- Open the raw `appcast.xml` URL and confirm the new item is present.
+- Confirm the ZIP and installer assets download from the GitHub Release.
+- Install the previous version on a test Mac and run `Check for Updates...`.
+- Complete the update and confirm the new bundle version launches.
+- Recheck menu bar, login item, notification permission, and unplug alerts.
 
-Then use `Status` > `Check for Updates` in an older installed build to verify
-the update notice opens the GitHub release page.
-
-## Later Hardening
-
-- Add Developer ID signing.
-- Add notarization.
-- Sign the installer package.
-- Automate build, checks, and release upload.
+The first Sparkle-enabled build still needs to be installed manually. Sparkle
+can update that build and all later releases.
